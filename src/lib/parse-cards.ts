@@ -10,13 +10,28 @@ export interface ParsedCard {
 
 type Role = "front" | "back" | "hint" | "extra";
 
+/** 自定义识别规则：四类表头关键词（命中即归类，用户可在设置里增删）。 */
+export type HeaderRules = {
+  front: string[];
+  back: string[];
+  hint: string[];
+  extra: string[];
+};
+
 /** 把表头模糊匹配到 正面/背面/读音/拓展 四种角色。 */
-function classifyHeader(raw: string): Role | null {
+function classifyHeader(raw: string, rules?: HeaderRules | null): Role | null {
   const s = raw.trim().toLowerCase();
   if (/读音|发音|音标|拼音|罗马|音读|训读|romaniz|pronunc|reading/.test(s)) return "hint";
   if (/拓展|扩展|延伸|补充|拓展内容|extra|extension/.test(s)) return "extra";
   if (/释义|意思|含义|中文|翻译|译文|解释|定义|备注|注释|meaning|definition|translation/.test(s)) return "back";
   if (/词汇|单词|生词|生字|词|word|term|泰语|韩语|日语|英语|原文|front|表达|短语|句子|例句/.test(s)) return "front";
+  // 用户自定义关键词（兜底，处理内置正则没覆盖到的表头）
+  if (rules) {
+    if ((rules.hint ?? []).some((k) => k && s.includes(k.toLowerCase()))) return "hint";
+    if ((rules.extra ?? []).some((k) => k && s.includes(k.toLowerCase()))) return "extra";
+    if ((rules.back ?? []).some((k) => k && s.includes(k.toLowerCase()))) return "back";
+    if ((rules.front ?? []).some((k) => k && s.includes(k.toLowerCase()))) return "front";
+  }
   return null;
 }
 
@@ -24,12 +39,12 @@ function splitRow(line: string, delim: string): string[] {
   return line.split(delim).map((c) => c.trim());
 }
 
-function parseTable(lines: string[], delim: string): ParsedCard[] {
+function parseTable(lines: string[], delim: string, rules?: HeaderRules | null): ParsedCard[] {
   const rows = lines.map((l) => splitRow(l, delim));
   if (rows.length === 0) return [];
 
   const header = rows[0];
-  const roles = header.map(classifyHeader);
+  const roles = header.map((h) => classifyHeader(h, rules));
   const hasHeader = roles.some((r) => r !== null);
 
   let frontIdx: number;
@@ -114,8 +129,8 @@ function parseLines(lines: string[]): ParsedCard[] {
     .filter((c) => c.front);
 }
 
-/** 入口：文本 → 卡片数组。 */
-export function parseCards(text: string): ParsedCard[] {
+/** 入口：文本 → 卡片数组。rules 为用户自定义表头关键词（可选）。 */
+export function parseCards(text: string, rules?: HeaderRules | null): ParsedCard[] {
   const rawLines = text
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -130,7 +145,7 @@ export function parseCards(text: string): ParsedCard[] {
     let tableBlock: string[] = [];
     const flush = () => {
       if (tableBlock.length > 0) {
-        results.push(...parseTable(tableBlock, "\t"));
+        results.push(...parseTable(tableBlock, "\t", rules));
         tableBlock = [];
       }
     };
@@ -151,7 +166,7 @@ export function parseCards(text: string): ParsedCard[] {
   // 表格：逗号分隔且每行列数一致（≥2）
   const colCounts = lines.map((l) => l.split(",").length);
   if (colCounts[0] >= 2 && colCounts.every((n) => n === colCounts[0])) {
-    return parseTable(lines, ",");
+    return parseTable(lines, ",", rules);
   }
 
   // 逐行：「词 — 释义」「词：释义」

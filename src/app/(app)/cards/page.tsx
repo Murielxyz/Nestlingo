@@ -1,5 +1,6 @@
 import { listCardGroups, listOrphanCards, friendlyQueryError } from "@/lib/supabase/queries";
 import { AddCardsButton } from "@/components/add-cards-button";
+import { ExportCardsButton } from "@/components/export-cards-button";
 import { CardsView } from "@/components/cards-view";
 import { EmptyState } from "@/components/empty-state";
 import type { Card, CardFolderGroup } from "@/lib/types";
@@ -22,7 +23,10 @@ export default async function CardsPage() {
         <div>
           <h1 className="text-2xl font-bold text-zinc-900">闪卡</h1>
         </div>
-        <AddCardsButton />
+        <div className="flex items-center gap-2">
+          <ExportCardsButton />
+          <AddCardsButton />
+        </div>
       </header>
 
       {error ? (

@@ -1,32 +1,79 @@
 @import "tailwindcss";
 
+/* ===== 语巢 设计系统（清新浅色治愈系 · sage-mint 鼠尾草薄荷绿） ===== */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --brand: oklch(0.62 0.10 165); /* 柔和鼠尾草薄荷绿主色 */
+  --brand-foreground: oklch(0.99 0.01 165);
+  --brand-soft: oklch(0.96 0.035 165);
+  --brand-soft-2: oklch(0.975 0.02 200);
+  --ink: oklch(0.32 0.02 200); /* 正文深灰墨色（非纯黑） */
+  --paper: oklch(0.99 0.005 200);
+  --table-border: oklch(0.88 0.01 200);
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+}
+
+/* 用 sage-mint 重定义 teal 色阶，全站现有的 bg-teal-* / text-teal-* 自动变成品牌色 */
+@theme {
+  --color-teal-50: oklch(0.975 0.02 165);
+  --color-teal-100: oklch(0.94 0.035 165);
+  --color-teal-200: oklch(0.88 0.05 165);
+  --color-teal-300: oklch(0.80 0.07 165);
+  --color-teal-400: oklch(0.72 0.09 165);
+  --color-teal-500: oklch(0.66 0.10 165);
+  --color-teal-600: oklch(0.62 0.10 165);
+  --color-teal-700: oklch(0.52 0.09 165);
+  --color-teal-800: oklch(0.44 0.08 165);
+  --color-teal-900: oklch(0.36 0.07 165);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-soft-2: var(--brand-soft-2);
+  --color-ink: var(--ink);
+  --color-paper: var(--paper);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background:
+    radial-gradient(1200px 600px at 100% -10%, var(--brand-soft-2), transparent 60%),
+    radial-gradient(1000px 500px at -10% 0%, var(--brand-soft), transparent 55%),
+    var(--paper);
+  background-attachment: fixed;
+  color: var(--ink);
   font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont,
     "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
     "Noto Sans CJK SC", "Noto Sans Thai", "Apple SD Gothic Neo",
     "Malgun Gothic", sans-serif;
 }
+
+/* ===== 复用工具类（照搬 STYLE_GUIDE） ===== */
+.card-soft {
+  @apply rounded-2xl border border-black/[0.04] bg-white/80 shadow-sm backdrop-blur;
+}
+
+.btn-brand {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium text-white transition-all;
+  background-image: linear-gradient(135deg, var(--brand), oklch(0.6 0.12 200));
+  box-shadow: 0 6px 18px oklch(0.62 0.10 165 / 0.25);
+}
+.btn-brand:hover { filter: brightness(1.05); }
+.btn-brand:active { transform: translateY(1px); }
+
+@utility brand-gradient {
+  background-image: linear-gradient(135deg, var(--brand), oklch(0.6 0.12 200));
+}
+
+/* 隐藏滚动条但保留滚动 */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* ===== TipTap 富文本编辑器内容区 ===== */
 .tiptap {
@@ -130,7 +177,7 @@ body {
   content: "";
   position: absolute;
   inset: 0;
-  background: rgba(20, 184, 166, 0.15);
+  background: oklch(0.62 0.10 165 / 0.15);
   pointer-events: none;
 }
 
@@ -141,11 +188,11 @@ body {
   top: 0;
   bottom: 0;
   width: 4px;
-  background-color: #14b8a6; /* teal-500，跟 app 主色一致 */
+  background-color: var(--brand);
   pointer-events: none;
 }
 .tiptap .column-resize-dragging {
-  background-color: #f0fdfa; /* 拖拽中的那一列给个浅底，看得清在调哪列 */
+  background-color: var(--brand-soft); /* 拖拽中的那一列给个浅底，看得清在调哪列 */
 }
 .tiptap.resize-cursor {
   cursor: col-resize; /* 悬停到列边框上时，整个编辑区光标变左右箭头 */
@@ -165,23 +212,23 @@ body {
   min-width: 0;
 }
 
-/* ===== callout（生词🟩 / 例句🟦 / 语法🟪 区块，Notion 风彩色卡片） ===== */
+/* ===== callout（生词 = 天蓝 / 例句 = 草绿 / 语法 = 紫 区块，Notion 风彩色卡片） ===== */
 .tiptap .callout {
   border-radius: 10px;
   padding: 0.45rem 0.75rem;
   margin: 0.75em 0;
 }
 .tiptap .callout[data-kind="word"] {
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
 }
 .tiptap .callout[data-kind="example"] {
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
 }
 .tiptap .callout[data-kind="grammar"] {
-  background: #f5f3ff;
-  border: 1px solid #ddd6fe;
+  background: #faf5ff;
+  border: 1px solid #e9d5ff;
 }
 .tiptap .callout-label {
   font-size: 0.85em;
@@ -197,6 +244,7 @@ body {
 /* ===== 分享图里的正文（跟编辑器同一套格式，颜色用 currentColor 跟随背景） ===== */
 .share-content {
   line-height: 1.7;
+  word-break: break-word; /* 长串无空格内容（泰语/长链接）在窄比例下也能换行，不横向溢出 */
 }
 .share-content p {
   margin: 0.5em 0;
@@ -303,4 +351,17 @@ body {
 }
 .share-content .callout-body > p {
   margin: 0.25em 0;
+}
+
+/* ===== 内嵌媒体（编辑器 + 分享图里的占位） ===== */
+.tiptap .media-embed {
+  margin: 0.75em 0;
+}
+.share-content [data-media-embed] {
+  margin: 0.5em 0;
+}
+.share-content .media-embed-thumb {
+  display: block;
+  max-width: 100%;
+  border-radius: 8px;
 }

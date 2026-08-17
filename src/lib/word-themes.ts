@@ -1,6 +1,9 @@
 // 词群页的「主题分类」：按单词本身的相关性（而不是来源笔记）把生词归成几大类。
 // 用关键词匹配（主要匹配背面中文释义，也带少量泰语关键词），离线、即时、无需 AI。
 // 匹配到多个主题时取第一个（顺序即优先级，更具体的主题放前面）。
+// 用户自定义分类（word_themes）排在内置主题之后，命中其关键词即归到该分类。
+
+import type { WordTheme } from "@/lib/types";
 
 export type Theme = {
   key: string;
@@ -31,11 +34,26 @@ export function themeMeta(key: string): Theme | null {
 
 export const OTHER_THEME: Theme = { key: "other", label: "其他", emoji: "📦", keywords: [] };
 
-/** 判断一个生词属于哪个主题（把正面+背面拼起来做关键词匹配）。 */
-export function classifyWord(front: string, back: string): string {
+/** 判断一个生词属于哪个主题（把正面+背面拼起来做关键词匹配）。内置主题优先，再查用户分类。 */
+export function classifyWord(
+  front: string,
+  back: string,
+  userThemes: WordTheme[] = []
+): string {
   const text = `${front} ${back}`.toLowerCase();
   for (const t of THEMES) {
     if (t.keywords.some((k) => text.includes(k))) return t.key;
   }
+  for (const t of userThemes) {
+    if ((t.keywords ?? []).some((k) => k && text.includes(k.toLowerCase()))) return t.id;
+  }
   return "other";
+}
+
+/** 给一个主题 key 取显示名：内置主题用自带 label，用户分类用分类名。 */
+export function themeLabelOf(key: string, userThemes: WordTheme[] = []): string {
+  const builtin = themeMeta(key);
+  if (builtin) return builtin.label;
+  const custom = userThemes.find((t) => t.id === key);
+  return custom?.name ?? "主题";
 }

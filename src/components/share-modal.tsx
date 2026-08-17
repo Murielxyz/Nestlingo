@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toPng } from "html-to-image";
 import { generateHTML } from "@tiptap/core";
 import { editorExtensions } from "@/lib/editor-extensions";
+import { docToText } from "@/lib/doc-to-text";
 import type { JSONContent } from "@tiptap/core";
 
 type BgKey = "white" | "paper" | "dark" | "grid" | "pastel";
@@ -51,6 +52,12 @@ type Part =
   | { kind: "block"; index: number }
   | { kind: "footer" };
 
+/** 给一个正文块生成一行纯文本预览（用于勾选列表）。 */
+function blockPreview(block: JSONContent): string {
+  const t = docToText({ type: "doc", content: [block] }).replace(/\s+/g, " ").trim();
+  return t.length > 60 ? `${t.slice(0, 60)}…` : t || "（空块）";
+}
+
 /**
  * 分享：把笔记按原排版生成图片（标题 + 正文，保留加粗/标题/列表/表格）。
  * 去掉固定比例，改为固定宽度 + 自然高度；长文按「块」切分，绝不在段落/表格中间切断，
@@ -73,6 +80,8 @@ export function ShareModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pages, setPages] = useState<Part[][]>([]);
+  // 取消勾选的正文块（默认全选）。用「反选集合」表示，空集合 = 全部导出。
+  const [deselected, setDeselected] = useState<Set<number>>(new Set());
 
   const bg = BACKGROUNDS.find((b) => b.key === bgKey)!;
   const ratio = RATIOS.find((r) => r.key === ratioKey)!;
@@ -101,10 +110,23 @@ export function ShareModal({
 
   const parts = useMemo<Part[]>(() => {
     const p: Part[] = [{ kind: "title" }];
-    blocks.forEach((_, i) => p.push({ kind: "block", index: i }));
+    blocks.forEach((_, i) => {
+      if (!deselected.has(i)) p.push({ kind: "block", index: i });
+    });
     p.push({ kind: "footer" });
     return p;
-  }, [blocks]);
+  }, [blocks, deselected]);
+
+  function toggleBlock(i: number) {
+    setDeselected((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }
+
+  const selectedCount = blocks.length - deselected.size;
 
   // 测量每个部分的高度，按页高上限切分（标题自然落在第 1 页、页脚落在最后一页）。
   // 注意：测量容器外层还套了一个 flex 容器，所以取 el.firstElementChild 的 children 才是每个块。
@@ -256,6 +278,42 @@ export function ShareModal({
               placeholder="标题"
               className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-800 focus:border-teal-500 focus:outline-none"
             />
+          </div>
+
+          {/* 选择要导出的内容（默认全选） */}
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <p className="text-xs font-medium text-zinc-500">
+                选择内容（{selectedCount}/{blocks.length}）
+              </p>
+              <button
+                onClick={() => setDeselected(new Set())}
+                className="text-xs font-medium text-teal-600 hover:text-teal-700"
+              >
+                全选
+              </button>
+            </div>
+            {blocks.length === 0 ? (
+              <p className="text-xs text-zinc-400">没有可导出的正文块。</p>
+            ) : (
+              <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-zinc-200 p-2">
+                {blocks.map((b, i) => (
+                  <li key={i}>
+                    <label className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1 hover:bg-zinc-50">
+                      <input
+                        type="checkbox"
+                        checked={!deselected.has(i)}
+                        onChange={() => toggleBlock(i)}
+                        className="mt-0.5 h-4 w-4 shrink-0 accent-teal-600"
+                      />
+                      <span className="min-w-0 flex-1 text-xs leading-snug text-zinc-600">
+                        {blockPreview(b)}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           {/* 预览（按页叠放） */}

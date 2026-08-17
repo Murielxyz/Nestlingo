@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { parseCards, type ParsedCard } from "@/lib/parse-cards";
+import type { RecognitionRules } from "@/lib/types";
 
 /**
  * 「添加闪卡」：粘贴任意文本（Excel 表格 / Word / 别的笔记），
@@ -32,9 +33,29 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [rules, setRules] = useState<RecognitionRules | null>(null);
+
+  // 拉取自定义识别规则，识别时按它归类表头。
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("user_settings")
+        .select("recognition_rules")
+        .limit(1)
+        .maybeSingle();
+      if (!cancelled) {
+        setRules((data?.recognition_rules ?? null) as RecognitionRules | null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function parse() {
-    setCards(parseCards(source));
+    setCards(parseCards(source, rules));
     setError(null);
   }
 

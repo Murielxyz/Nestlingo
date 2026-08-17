@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { parseCards, type ParsedCard } from "@/lib/parse-cards";
 import { parseSections, type CardSection } from "@/lib/parse-sections";
+import type { RecognitionRules } from "@/lib/types";
 
 const KIND_LABEL: Record<"word" | "example" | "grammar", string> = {
   word: "生词",
@@ -39,6 +40,7 @@ export function ConvertToCards({
     initialSections.length > 0 ? [] : parseCards(text)
   );
   const [existingFronts, setExistingFronts] = useState<Set<string>>(new Set());
+  const [rules, setRules] = useState<RecognitionRules | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -61,8 +63,29 @@ export function ConvertToCards({
     };
   }, [noteId]);
 
+  // 打开时拉取自定义识别规则，加载后用它重新解析（不影响「区域/整篇」模式判定）。
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("user_settings")
+        .select("recognition_rules")
+        .limit(1)
+        .maybeSingle();
+      if (cancelled) return;
+      const r = (data?.recognition_rules ?? null) as RecognitionRules | null;
+      setRules(r);
+      setSections(parseSections(text, r));
+      setFlat(parseCards(text, r));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [text]);
+
   function reparse() {
-    setFlat(parseCards(source));
+    setFlat(parseCards(source, rules));
     setError(null);
   }
 

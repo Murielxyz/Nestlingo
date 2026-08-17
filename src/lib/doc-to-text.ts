@@ -44,6 +44,11 @@ function blockText(node: JSONContent): string {
     case "blockquote":
     case "codeBlock":
       return inlineText(node) + "\n";
+    case "mediaEmbed": {
+      // 媒体序列化成一行「[媒体] 链接」，让转成闪卡时跳过它（不会误识别成卡片内容）。
+      const src = (node.attrs?.src as string) ?? "";
+      return `[媒体] ${src}\n`;
+    }
     default:
       return (node.content ?? []).map(blockText).join("");
   }

@@ -9,9 +9,11 @@ import {
   listWeakCards,
   listThemeCards,
   listThemeReviewItems,
+  listWordThemes,
   friendlyQueryError,
 } from "@/lib/supabase/queries";
-import { themeMeta } from "@/lib/word-themes";
+import { themeLabelOf } from "@/lib/word-themes";
+import type { WordTheme } from "@/lib/types";
 import { ReviewSession } from "@/components/review-session";
 import { TestSession } from "@/components/test-session";
 import { ReviewHome } from "@/components/review-home";
@@ -29,6 +31,15 @@ function parseKind(k?: string): string | null {
 
 function kindSuffixOf(k?: string | null): string {
   return k && KIND_LABEL[k] ? ` · ${KIND_LABEL[k]}` : "";
+}
+
+/** 拉取用户自定义词群分类（新表可能还没建，出错就返回空，不影响内置主题）。 */
+async function loadUserThemes(): Promise<WordTheme[]> {
+  try {
+    return await listWordThemes();
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -100,7 +111,7 @@ export default async function ReviewPage({
     try {
       if (theme) {
         cards = await listThemeCards(theme);
-        title = themeMeta(theme)?.label ?? "主题";
+        title = themeLabelOf(theme, await loadUserThemes());
       } else if (note) {
         const noteId = note === "orphans" ? null : note;
         const cardKind = parseKind(kind);
@@ -199,7 +210,7 @@ export default async function ReviewPage({
 
   // ===== 背诵某一个主题 =====
   if (theme) {
-    const meta = themeMeta(theme);
+    const themeTitle = themeLabelOf(theme, await loadUserThemes());
     let items: Awaited<ReturnType<typeof listThemeReviewItems>> = [];
     let error: string | null = null;
     let dailyGoal = 20;
@@ -227,7 +238,7 @@ export default async function ReviewPage({
             ←
           </Link>
           <h1 className="text-2xl font-bold text-zinc-900">
-            背诵「{meta?.label ?? "主题"}」生词
+            背诵「{themeTitle}」生词
           </h1>
         </header>
 

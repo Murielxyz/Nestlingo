@@ -2,15 +2,18 @@
 // 里面的内容（词表 / 例句 / 语法说明）在「转成闪卡」时按标签自动归为对应类型。
 // 用 data-kind 标记类型；docToText 把它序列化成一行「生词 / 例句 / 语法」标记，
 // parse-sections 读到这行就把下面的内容归到对应区域（旧的标题写法也兼容）。
+//
+// 配色（跟随 STYLE_GUIDE）：生词 = 天蓝 / 例句 = 草绿 / 语法 = 紫。
+// 编辑器视图用 lucide 图标（见 callout-nodeview），renderHTML 只输出文字标签给分享图。
 
 import { Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import { CalloutNodeView } from "./callout-nodeview";
 
-const KIND_META: Record<string, { icon: string; label: string }> = {
-  word: { icon: "🟩", label: "生词" },
-  example: { icon: "🟦", label: "例句" },
-  grammar: { icon: "🟪", label: "语法" },
+export const KIND_META: Record<string, { label: string; color: string }> = {
+  word: { label: "生词", color: "#0ea5e9" },
+  example: { label: "例句", color: "#22c55e" },
+  grammar: { label: "语法", color: "#a855f7" },
 };
 
 export function calloutLabel(kind: string): string {
@@ -48,7 +51,7 @@ export const Callout = Node.create({
     return [
       "div",
       mergeAttributes(HTMLAttributes, { class: "callout" }),
-      ["div", { class: "callout-label", contenteditable: "false" }, `${meta.icon} ${meta.label}`],
+      ["div", { class: "callout-label", contenteditable: "false" }, meta.label],
       ["div", { class: "callout-body" }, 0],
     ];
   },

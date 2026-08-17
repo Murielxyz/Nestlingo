@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { FlaskConical, Play } from "lucide-react";
 import type { ReviewStats, CollectionSummary } from "@/lib/types";
 import type { ReviewItem } from "@/lib/supabase/queries";
 import { SpeakButton } from "./speak-button";
@@ -23,10 +24,10 @@ function collectionHref(c: CollectionSummary, mode?: string): string {
 /**
  * 复习页主页：
  * 1. 顶部标题 + 综合测试入口；
- * 2. 主板块「正在背的合集」（最近在背的那一个），可「继续背 / 换一个」；
- * 3. 选择合集列表（背/测）；
- * 4. 待加强的卡；
- * 5. 底部一行轻量数据总览（缩小存在感，不占主视觉）。
+ * 2. 统计卡片组（今日已复习 / 到期待复习 / 已掌握 / 待加强）；
+ * 3. 「正在背的合集」→ 继续背；
+ * 4. 选择合集列表（背/测）；
+ * 5. 待加强的卡。
  */
 export function ReviewHome({
   stats,
@@ -46,48 +47,59 @@ export function ReviewHome({
     return collections.find((c) => c.due > 0) ?? collections[0] ?? null;
   })();
 
-  const maxDay = Math.max(1, ...stats.recentDays.map((d) => d.count));
+  const statCards = [
+    { label: "今日已复习", value: stats.todayReviewed },
+    { label: "到期待复习", value: stats.due },
+    { label: "已掌握", value: stats.mastered },
+    { label: "待加强", value: stats.weak },
+  ];
 
   return (
     <div>
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-zinc-900">复习</h1>
         <Link
           href="/review?mode=test"
-          className="rounded-lg bg-teal-600 px-3.5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
+          className="btn-brand"
         >
-          🧪 综合测试
+          <FlaskConical className="h-4 w-4" />
+          综合测试
         </Link>
       </header>
+
+      {/* 统计卡片组（顶部） */}
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {statCards.map((s) => (
+          <div key={s.label} className="card-soft px-4 py-3">
+            <p className="text-2xl font-bold text-zinc-900">{s.value}</p>
+            <p className="mt-0.5 text-xs text-zinc-500">{s.label}</p>
+          </div>
+        ))}
+      </div>
 
       {/* 主板块：正在背的合集 */}
       {current ? (
         <section className="mb-6">
           <p className="mb-2 text-xs font-medium text-zinc-400">正在背的合集</p>
-          <div className="rounded-2xl border border-teal-200 bg-teal-50/60 p-5">
+          <div className="card-soft p-5">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="truncate text-base font-semibold text-zinc-900">
-                  📝 {current.title}
+                  {current.title}
                 </p>
                 <p className="mt-0.5 text-xs text-zinc-500">
                   待复习 {current.due} · 共 {current.total}
                 </p>
               </div>
             </div>
-            <div className="mt-4 flex gap-2">
+            <div className="mt-4">
               <Link
                 href={collectionHref(current)}
-                className="flex-1 rounded-xl bg-teal-600 py-2.5 text-center text-sm font-semibold text-white transition-colors hover:bg-teal-700"
+                className="btn-brand w-full"
               >
-                ▶ 继续背
+                <Play className="h-4 w-4" />
+                继续背
               </Link>
-              <a
-                href="#collections"
-                className="rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm text-zinc-600 transition-colors hover:bg-zinc-50"
-              >
-                换一个合集
-              </a>
             </div>
           </div>
         </section>
@@ -100,7 +112,7 @@ export function ReviewHome({
       )}
 
       {/* 选择合集 */}
-      <section id="collections" className="mb-8">
+      <section className="mb-8">
         <h2 className="mb-3 text-sm font-semibold text-zinc-700">选择合集</h2>
         {collections.length === 0 ? (
           <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500">
@@ -111,10 +123,10 @@ export function ReviewHome({
             {collections.map((c) => (
               <li
                 key={c.key}
-                className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3"
+                className="card-soft flex items-center gap-3 px-4 py-3"
               >
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800">
-                  📝 {c.title}
+                  {c.title}
                 </span>
                 <span className="shrink-0 text-xs text-zinc-400">
                   待复习 {c.due} · 共 {c.total}
@@ -154,7 +166,7 @@ export function ReviewHome({
             {weakCards.map((w) => (
               <li
                 key={w.card.id}
-                className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-2.5"
+                className="card-soft flex items-center gap-3 px-4 py-2.5"
               >
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-zinc-900">{w.card.front}</p>
@@ -177,41 +189,6 @@ export function ReviewHome({
           </ul>
         </section>
       )}
-
-      {/* 底部：数据总览（缩小存在感，放在最后，样式轻量化） */}
-      <section className="border-t border-zinc-100 pt-4">
-        <div className="grid grid-cols-4 gap-2 text-center">
-          <div>
-            <p className="text-base font-semibold text-zinc-600">{stats.todayReviewed}</p>
-            <p className="mt-0.5 text-[11px] text-zinc-400">今日已复习</p>
-          </div>
-          <div>
-            <p className="text-base font-semibold text-zinc-600">{stats.due}</p>
-            <p className="mt-0.5 text-[11px] text-zinc-400">到期待复习</p>
-          </div>
-          <div>
-            <p className="text-base font-semibold text-zinc-600">{stats.mastered}</p>
-            <p className="mt-0.5 text-[11px] text-zinc-400">已掌握</p>
-          </div>
-          <div>
-            <p className="text-base font-semibold text-zinc-600">{stats.weak}</p>
-            <p className="mt-0.5 text-[11px] text-zinc-400">待加强</p>
-          </div>
-        </div>
-
-        {/* 最近 7 天迷你条形图 */}
-        <div className="mt-4 flex items-end gap-1.5" aria-hidden>
-          {stats.recentDays.map((d) => (
-            <div key={d.label} className="flex flex-1 flex-col items-center gap-0.5">
-              <div
-                className="w-full max-w-[28px] rounded-sm bg-teal-100"
-                style={{ height: `${Math.max(3, (d.count / maxDay) * 36)}px` }}
-              />
-              <span className="text-[10px] text-zinc-300">{d.label}</span>
-            </div>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }

@@ -3,7 +3,7 @@
 // （每行「词 — 释义」，或粘贴的表格）都会归到对应区域。docToText 已把 callout / 标题
 // 变成一行文字、表格变成 TSV，所以这里只需按标记行切分，每段再交给 parseCards 解析成卡片。
 
-import { parseCards, type ParsedCard } from "@/lib/parse-cards";
+import { parseCards, type ParsedCard, type HeaderRules } from "@/lib/parse-cards";
 import { HR_TEXT } from "@/lib/doc-to-text";
 
 export type SectionKind = "word" | "example" | "grammar";
@@ -39,14 +39,14 @@ function sectionKind(line: string): SectionKind | null {
  * 把整篇笔记纯文本按「生词 / 例句 / 语法」标记切成若干段，各自解析成卡片。
  * 没有任何这类标记时返回空数组（调用方退回「整篇解析」）。
  */
-export function parseSections(text: string): CardSection[] {
+export function parseSections(text: string, rules?: HeaderRules | null): CardSection[] {
   const lines = text.split(/\r?\n/);
   const sections: CardSection[] = [];
   let current: { kind: SectionKind; title: string; lines: string[] } | null = null;
 
   const flush = () => {
     if (!current) return;
-    const cards = parseCards(current.lines.join("\n"));
+    const cards = parseCards(current.lines.join("\n"), rules);
     if (cards.length > 0) {
       sections.push({ kind: current.kind, title: current.title, cards });
     }

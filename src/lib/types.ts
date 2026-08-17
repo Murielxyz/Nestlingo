@@ -51,11 +51,29 @@ export type CardFolderGroup = {
   notes: CardNoteGroup[];
 };
 
-/** 用户设置（每日复习目标、复习提醒）。 */
+/** 用户设置（每日复习目标、复习提醒、识别规则）。 */
 export type UserSettings = {
   daily_goal: number;
   reminder_enabled: boolean;
   reminder_time: string | null;
+  recognition_rules: RecognitionRules | null;
+};
+
+/** 闪卡识别规则：自定义「正面 / 背面 / 读音 / 拓展」四类表头关键词。 */
+export type RecognitionRules = {
+  front: string[];
+  back: string[];
+  hint: string[];
+  extra: string[];
+};
+
+/** 用户自定义的词群分类（名字 + 关键词，命中即收录）。 */
+export type WordTheme = {
+  id: string;
+  user_id: string;
+  name: string;
+  keywords: string[];
+  created_at: string;
 };
 
 /** 复习状态（每张卡一条，SM-2 间隔重复）。 */
@@ -93,19 +111,4 @@ export type CollectionSummary = {
   due: number;
   /** 最近一次复习某张卡的时间（毫秒时间戳）；没复习过为 null。用来找「最近在背的合集」。 */
   lastReviewedAt: number | null;
-};
-
-/** 媒体学习条目：一段 YouTube 视频或一段音频，可转录成文字稿再生成精读笔记。 */
-export type MediaItem = {
-  id: string;
-  user_id: string;
-  title: string;
-  source_url: string;
-  kind: string; // 'youtube' | 'audio'
-  embed_url: string | null;
-  thumbnail: string | null;
-  transcript: string | null;
-  note_id: string | null;
-  created_at: string;
-  updated_at: string;
 };

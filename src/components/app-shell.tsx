@@ -3,16 +3,17 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { NotebookPen, RefreshCw, Layers, Tags, Settings } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { BrandMark } from "./brand-mark";
 
-const NAV_ITEMS = [
-  { href: "/notes", label: "笔记", icon: "📝" },
-  { href: "/review", label: "复习", icon: "🔁" },
-  { href: "/cards", label: "卡片", icon: "🃏" },
-  { href: "/groups", label: "词群", icon: "🗂️" },
-  { href: "/media", label: "媒体", icon: "🎬" },
-  { href: "/settings", label: "设置", icon: "⚙️" },
+const NAV_ITEMS: { href: string; label: string; icon: LucideIcon }[] = [
+  { href: "/notes", label: "笔记", icon: NotebookPen },
+  { href: "/review", label: "复习", icon: RefreshCw },
+  { href: "/cards", label: "卡片", icon: Layers },
+  { href: "/groups", label: "词群", icon: Tags },
+  { href: "/settings", label: "设置", icon: Settings },
 ];
 
 function isActive(pathname: string, href: string) {
@@ -67,7 +68,7 @@ export function AppShell({
   }, [pathname]);
 
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="min-h-screen">
       {/* ===== 桌面端左侧边栏（可收起成窄条，只留图标） ===== */}
       <aside
         className={`hidden md:flex fixed inset-y-0 left-0 flex-col border-r border-zinc-200 bg-white transition-[width] duration-200 ${
@@ -112,6 +113,7 @@ export function AppShell({
         <nav className={`flex-1 py-4 space-y-1 ${collapsed ? "px-2" : "px-3"}`}>
           {NAV_ITEMS.map((item) => {
             const active = isActive(pathname, item.href);
+            const Icon = item.icon;
             return (
               <Link
                 key={item.href}
@@ -125,7 +127,7 @@ export function AppShell({
                     : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
                 }`}
               >
-                <span className="text-base">{item.icon}</span>
+                <Icon className="h-[18px] w-[18px] shrink-0" />
                 {!collapsed && item.label}
               </Link>
             );
@@ -159,7 +161,7 @@ export function AppShell({
           className="rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs text-zinc-600"
           aria-label="设置"
         >
-          ⚙️
+          <Settings className="h-4 w-4" />
         </Link>
       </header>
 
@@ -176,6 +178,7 @@ export function AppShell({
       <nav className="md:hidden fixed inset-x-0 bottom-0 z-10 flex border-t border-zinc-200 bg-white">
         {NAV_ITEMS.map((item) => {
           const active = isActive(pathname, item.href);
+          const Icon = item.icon;
           return (
             <Link
               key={item.href}
@@ -184,7 +187,7 @@ export function AppShell({
                 active ? "text-teal-600" : "text-zinc-500"
               }`}
             >
-              <span className="text-lg">{item.icon}</span>
+              <Icon className="h-5 w-5" />
               {item.label}
             </Link>
           );

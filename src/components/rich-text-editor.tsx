@@ -3,8 +3,26 @@
 import { useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import Placeholder from "@tiptap/extension-placeholder";
+import {
+  Bold,
+  Italic,
+  Underline,
+  Highlighter,
+  List,
+  Table as TableIcon,
+  Columns2,
+  Minus,
+  Image as ImageIcon,
+  Video,
+  Sprout,
+  MessageSquare,
+  Puzzle,
+  Undo2,
+  Redo2,
+} from "lucide-react";
 import { editorExtensions } from "@/lib/editor-extensions";
 import { docToText } from "@/lib/doc-to-text";
+import { parseMediaUrl } from "@/lib/media";
 import type { JSONContent } from "@tiptap/core";
 
 function ToolButton({
@@ -23,7 +41,7 @@ function ToolButton({
       type="button"
       onClick={onClick}
       title={title}
-      className={`rounded-lg px-2.5 py-1.5 text-sm transition-colors ${
+      className={`rounded-lg px-2 py-1.5 transition-colors ${
         active
           ? "bg-teal-100 text-teal-700"
           : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
@@ -66,8 +84,9 @@ export function RichTextEditor({
     },
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [kindMenuOpen, setKindMenuOpen] = useState(false);
   const [blockType, setBlockType] = useState("paragraph");
+  const [mediaOpen, setMediaOpen] = useState(false);
+  const [mediaUrl, setMediaUrl] = useState("");
 
   // 标题下拉要实时反映光标所在的块：显式监听 selection/transaction，
   // 否则光标的块变了（点标题、移动光标）下拉不一定重渲染，会「停在同一个」上。
@@ -158,6 +177,28 @@ export function RichTextEditor({
     e.target.value = "";
   }
 
+  /** 媒体：粘贴 YouTube / 音频链接，识别后插入内嵌节点。 */
+  function insertMedia() {
+    const url = mediaUrl.trim();
+    if (!url) return;
+    const parsed = parseMediaUrl(url);
+    if (!parsed) {
+      setMediaUrl("");
+      setMediaOpen(false);
+      return;
+    }
+    editor
+      .chain()
+      .focus()
+      .insertContent({
+        type: "mediaEmbed",
+        attrs: { src: parsed.embedUrl, kind: parsed.kind, title: parsed.title },
+      })
+      .run();
+    setMediaUrl("");
+    setMediaOpen(false);
+  }
+
   return (
     <div className="flex flex-1 flex-col bg-white">
       {/* 工具栏（清爽一条，不描边）；sticky 常驻顶部，写长笔记时不用滚回顶部就能插标题/表格等 */}
@@ -176,132 +217,44 @@ export function RichTextEditor({
           <option value="codeBlock">等宽样式</option>
         </select>
 
-        <ToolButton
-          onClick={() => editor.chain().focus().toggleBold().run()}
-          active={editor.isActive("bold")}
-          title="加粗"
-        >
-          <span className="font-bold">B</span>
+        <ToolButton onClick={() => editor.chain().focus().toggleBold().run()} active={editor.isActive("bold")} title="加粗">
+          <Bold className="h-4 w-4" />
         </ToolButton>
-        <ToolButton
-          onClick={() => editor.chain().focus().toggleItalic().run()}
-          active={editor.isActive("italic")}
-          title="斜体"
-        >
-          <span className="italic">I</span>
+        <ToolButton onClick={() => editor.chain().focus().toggleItalic().run()} active={editor.isActive("italic")} title="斜体">
+          <Italic className="h-4 w-4" />
         </ToolButton>
-        <ToolButton
-          onClick={() => editor.chain().focus().toggleUnderline().run()}
-          active={editor.isActive("underline")}
-          title="下划线"
-        >
-          <span className="underline">U</span>
+        <ToolButton onClick={() => editor.chain().focus().toggleUnderline().run()} active={editor.isActive("underline")} title="下划线">
+          <Underline className="h-4 w-4" />
         </ToolButton>
-        <ToolButton
-          onClick={() => editor.chain().focus().toggleHighlight().run()}
-          active={editor.isActive("highlight")}
-          title="高亮"
-        >
-          <span className="rounded bg-yellow-200 px-1">A</span>
+        <ToolButton onClick={() => editor.chain().focus().toggleHighlight().run()} active={editor.isActive("highlight")} title="高亮">
+          <Highlighter className="h-4 w-4" />
         </ToolButton>
-        <ToolButton
-          onClick={() => editor.chain().focus().toggleBulletList().run()}
-          active={editor.isActive("bulletList")}
-          title="列表"
-        >
-          ≡
+        <ToolButton onClick={() => editor.chain().focus().toggleBulletList().run()} active={editor.isActive("bulletList")} title="列表">
+          <List className="h-4 w-4" />
         </ToolButton>
-        {/* 生词 / 例句 / 语法：独立成一个按钮（不是表格），插一个带标签的 callout，转卡时按标签归类 */}
-        <div className="relative">
-          <ToolButton onClick={() => setKindMenuOpen((v) => !v)} title="插入生词 / 例句 / 语法">
-            词
-          </ToolButton>
-          {kindMenuOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setKindMenuOpen(false)} />
-              <div className="absolute left-0 top-full z-20 mt-1 w-32 overflow-hidden rounded-lg border border-zinc-200 bg-white py-1 text-sm shadow-lg">
-                <button
-                  onClick={() => {
-                    setKindMenuOpen(false);
-                    insertKindCallout("word");
-                  }}
-                  className="block w-full px-3 py-1.5 text-left text-zinc-700 hover:bg-zinc-50"
-                >
-                  🟩 生词
-                </button>
-                <button
-                  onClick={() => {
-                    setKindMenuOpen(false);
-                    insertKindCallout("example");
-                  }}
-                  className="block w-full px-3 py-1.5 text-left text-zinc-700 hover:bg-zinc-50"
-                >
-                  🟦 例句
-                </button>
-                <button
-                  onClick={() => {
-                    setKindMenuOpen(false);
-                    insertKindCallout("grammar");
-                  }}
-                  className="block w-full px-3 py-1.5 text-left text-zinc-700 hover:bg-zinc-50"
-                >
-                  🟪 语法
-                </button>
-              </div>
-            </>
-          )}
-        </div>
 
-        {/* 表格：点一下插入普通表格；插好后下面出现一行横向「表格操作」工具栏 */}
+        <span className="mx-1 h-5 w-px bg-zinc-200" />
+
+        {/* 表格 / 分列 / 分割线 */}
         <ToolButton onClick={insertNormalTable} title="插入表格">
-          ▦
+          <TableIcon className="h-4 w-4" />
         </ToolButton>
         <ToolButton onClick={insertSplitColumns} title="分列（原文 / 译文对照）">
-          <svg
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <rect x="3" y="4" width="18" height="16" rx="2" />
-            <line x1="12" y1="4" x2="12" y2="20" />
-          </svg>
+          <Columns2 className="h-4 w-4" />
         </ToolButton>
         <ToolButton
           onClick={() => editor.chain().focus().setHorizontalRule().run()}
           title="分割线（分割区块，转成闪卡只取分割线到标题之间）"
         >
-          <svg
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            <line x1="4" y1="12" x2="20" y2="12" />
-          </svg>
+          <Minus className="h-4 w-4" />
         </ToolButton>
+
+        {/* 图片 / 媒体 */}
         <ToolButton onClick={() => fileInputRef.current?.click()} title="上传图片">
-          <svg
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <path d="M21 15l-5-5L5 21" />
-          </svg>
+          <ImageIcon className="h-4 w-4" />
+        </ToolButton>
+        <ToolButton onClick={() => setMediaOpen((v) => !v)} title="插入媒体（视频 / 音频）">
+          <Video className="h-4 w-4" />
         </ToolButton>
         <input
           ref={fileInputRef}
@@ -311,14 +264,80 @@ export function RichTextEditor({
           onChange={pickImage}
         />
 
+        {/* 生词 / 例句 / 语法：3 个独立按钮，放在图片/媒体后面，各自淡色系 */}
+        <button
+          type="button"
+          onClick={() => insertKindCallout("word")}
+          title="插入生词区块"
+          className="ml-1 inline-flex items-center gap-1 rounded-lg bg-sky-50 px-2 py-1.5 text-sm text-sky-600 transition-colors hover:bg-sky-100"
+        >
+          <Sprout className="h-4 w-4" />
+          生词
+        </button>
+        <button
+          type="button"
+          onClick={() => insertKindCallout("example")}
+          title="插入例句区块"
+          className="inline-flex items-center gap-1 rounded-lg bg-green-50 px-2 py-1.5 text-sm text-green-600 transition-colors hover:bg-green-100"
+        >
+          <MessageSquare className="h-4 w-4" />
+          例句
+        </button>
+        <button
+          type="button"
+          onClick={() => insertKindCallout("grammar")}
+          title="插入语法区块"
+          className="inline-flex items-center gap-1 rounded-lg bg-purple-50 px-2 py-1.5 text-sm text-purple-600 transition-colors hover:bg-purple-100"
+        >
+          <Puzzle className="h-4 w-4" />
+          语法
+        </button>
+
         <span className="mx-1 h-5 w-px bg-zinc-200" />
 
         <ToolButton onClick={() => editor.chain().focus().undo().run()} title="撤销">
-          ↩
+          <Undo2 className="h-4 w-4" />
         </ToolButton>
         <ToolButton onClick={() => editor.chain().focus().redo().run()} title="重做">
-          ↪
+          <Redo2 className="h-4 w-4" />
         </ToolButton>
+
+        {/* 媒体弹窗 */}
+        {mediaOpen && (
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setMediaOpen(false)} />
+            <div className="absolute right-0 top-full z-20 mt-1 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-lg md:right-6">
+              <p className="mb-2 text-xs font-medium text-zinc-500">
+                粘贴 YouTube 视频或音频（mp3/m4a/…）链接
+              </p>
+              <input
+                value={mediaUrl}
+                onChange={(e) => setMediaUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") insertMedia();
+                }}
+                placeholder="https://…"
+                autoFocus
+                className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-800 focus:border-teal-500 focus:outline-none"
+              />
+              <div className="mt-2 flex justify-end gap-2">
+                <button
+                  onClick={() => setMediaOpen(false)}
+                  className="rounded-lg px-3 py-1.5 text-sm text-zinc-500 hover:bg-zinc-50"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={insertMedia}
+                  disabled={!mediaUrl.trim()}
+                  className="rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
+                >
+                  嵌入
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* 光标在表格里时：横向一条表格操作工具栏（插/删行列、标题行、删表） */}

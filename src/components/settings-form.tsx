@@ -69,7 +69,7 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
   return (
     <div className="space-y-6">
       {/* 每日目标 */}
-      <section className="rounded-2xl border border-zinc-200 bg-white p-4">
+      <section className="card-soft p-4">
         <h2 className="text-sm font-semibold text-zinc-900">每日背诵目标</h2>
         <p className="mt-0.5 text-xs text-zinc-500">
           每天想背多少张，复习时每轮最多背这些（类似 Anki 的每日计划）。
@@ -87,7 +87,7 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
       </section>
 
       {/* 复习提醒 */}
-      <section className="rounded-2xl border border-zinc-200 bg-white p-4">
+      <section className="card-soft p-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-zinc-900">每日复习提醒</h2>
           <button
@@ -126,7 +126,7 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
       <button
         onClick={save}
         disabled={busy}
-        className="w-full rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700 disabled:opacity-60"
+        className="btn-brand w-full"
       >
         {busy ? "保存中…" : saved ? "已保存 ✓" : "保存设置"}
       </button>

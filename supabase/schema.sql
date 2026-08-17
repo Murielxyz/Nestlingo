@@ -92,10 +92,14 @@ create table if not exists public.user_settings (
   daily_goal       int,                    -- 每日计划背多少张（空则不限）
   reminder_enabled boolean not null default false,
   reminder_time    text,                   -- "HH:MM"，如 "20:00"
+  recognition_rules jsonb,                 -- 自定义识别规则（正面/背面/读音/拓展表头关键词）
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now(),
   unique (user_id)
 );
+
+-- 给已存在的库补 recognition_rules 列（幂等）
+alter table public.user_settings add column if not exists recognition_rules jsonb;
 
 -- ============================================================
 -- 索引（加快按用户 / 按文件夹 / 按笔记 / 按到期查询）
@@ -169,34 +173,20 @@ create trigger user_settings_set_updated_at before update on public.user_setting
   for each row execute function public.set_updated_at();
 
 -- ============================================================
--- 表 6：媒体学习条目 media_items（YouTube 视频 / 播客音频）
---   kind       'youtube' | 'audio'
---   transcript 转录 / 粘贴的文字稿
---   note_id    由文字稿生成的精读笔记（可空）
+-- 表 6：用户自定义词群分类 word_themes（名字 + 关键词，命中即收录）
 -- ============================================================
-create table if not exists public.media_items (
+create table if not exists public.word_themes (
   id         uuid primary key default gen_random_uuid(),
   user_id    uuid not null default auth.uid(),
-  title      text not null default '',
-  source_url text not null,
-  kind       text not null default 'youtube',
-  embed_url  text,
-  thumbnail  text,
-  transcript text,
-  note_id    uuid references public.notes(id) on delete set null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  deleted_at timestamptz
+  name       text not null,
+  keywords   text[] not null default '{}',
+  created_at timestamptz not null default now()
 );
 
-create index if not exists media_items_user_id_idx on public.media_items (user_id);
+create index if not exists word_themes_user_id_idx on public.word_themes (user_id);
 
-alter table public.media_items enable row level security;
+alter table public.word_themes enable row level security;
 
-drop policy if exists "media_items_own" on public.media_items;
-create policy "media_items_own" on public.media_items
+drop policy if exists "word_themes_own" on public.word_themes;
+create policy "word_themes_own" on public.word_themes
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
-
-drop trigger if exists media_items_set_updated_at on public.media_items;
-create trigger media_items_set_updated_at before update on public.media_items
-  for each row execute function public.set_updated_at();

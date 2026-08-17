@@ -12,7 +12,7 @@ import type {
   ReviewStats,
   CollectionSummary,
   UserSettings,
-  MediaItem,
+  WordTheme,
 } from "@/lib/types";
 import { classifyWord } from "@/lib/word-themes";
 
@@ -351,7 +351,7 @@ export async function getUserSettings(): Promise<UserSettings> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("user_settings")
-    .select("daily_goal, reminder_enabled, reminder_time")
+    .select("daily_goal, reminder_enabled, reminder_time, recognition_rules")
     .limit(1)
     .maybeSingle();
   if (error) throw error;
@@ -359,7 +359,19 @@ export async function getUserSettings(): Promise<UserSettings> {
     daily_goal: data?.daily_goal ?? 20,
     reminder_enabled: data?.reminder_enabled ?? false,
     reminder_time: data?.reminder_time ?? null,
+    recognition_rules: (data?.recognition_rules ?? null) as UserSettings["recognition_rules"],
   };
+}
+
+/** 用户自定义词群分类（新建时间在前）。 */
+export async function listWordThemes(): Promise<WordTheme[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("word_themes")
+    .select("*")
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as WordTheme[];
 }
 
 // ============================================================
@@ -596,31 +608,39 @@ export async function listWordCards(): Promise<CardWithNote[]> {
 /** 某个主题下的全部「生词」卡（测试用，不过滤到期）。 */
 export async function listThemeCards(themeKey: string): Promise<Card[]> {
   const supabase = await createClient();
-  const { data: cards, error } = await supabase
-    .from("cards")
-    .select("*")
-    .eq("kind", "word")
-    .order("position", { ascending: true })
-    .order("created_at", { ascending: true });
-  if (error) throw error;
-  return ((cards ?? []) as Card[]).filter(
-    (c) => classifyWord(c.front, c.back ?? "") === themeKey
+  const [cardsRes, themesRes] = await Promise.all([
+    supabase
+      .from("cards")
+      .select("*")
+      .eq("kind", "word")
+      .order("position", { ascending: true })
+      .order("created_at", { ascending: true }),
+    supabase.from("word_themes").select("*"),
+  ]);
+  if (cardsRes.error) throw cardsRes.error;
+  const userThemes = (themesRes.data ?? []) as WordTheme[];
+  return ((cardsRes.data ?? []) as Card[]).filter(
+    (c) => classifyWord(c.front, c.back ?? "", userThemes) === themeKey
   );
 }
 
 /** 某个主题下「到期」的生词卡 + 复习状态（背诵用，跟按笔记背诵同规则）。 */
 export async function listThemeReviewItems(themeKey: string): Promise<ReviewItem[]> {
   const supabase = await createClient();
-  const { data: cards, error } = await supabase
-    .from("cards")
-    .select("*")
-    .eq("kind", "word")
-    .order("position", { ascending: true })
-    .order("created_at", { ascending: true });
-  if (error) throw error;
+  const [cardsRes, themesRes] = await Promise.all([
+    supabase
+      .from("cards")
+      .select("*")
+      .eq("kind", "word")
+      .order("position", { ascending: true })
+      .order("created_at", { ascending: true }),
+    supabase.from("word_themes").select("*"),
+  ]);
+  if (cardsRes.error) throw cardsRes.error;
+  const userThemes = (themesRes.data ?? []) as WordTheme[];
 
-  const matched = ((cards ?? []) as Card[]).filter(
-    (c) => classifyWord(c.front, c.back ?? "") === themeKey
+  const matched = ((cardsRes.data ?? []) as Card[]).filter(
+    (c) => classifyWord(c.front, c.back ?? "", userThemes) === themeKey
   );
   if (matched.length === 0) return [];
 
@@ -641,31 +661,4 @@ export async function listThemeReviewItems(themeKey: string): Promise<ReviewItem
       return new Date(s.due_at).getTime() <= now;
     })
     .map((c) => ({ card: c, state: stateMap.get(c.id) ?? null }));
-}
-
-// ============================================================
-// 媒体学习（YouTube / 播客）
-// ============================================================
-
-/** 媒体条目列表（最新在前）。 */
-export async function listMediaItems(): Promise<MediaItem[]> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("media_items")
-    .select("*")
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return (data ?? []) as MediaItem[];
-}
-
-/** 单个媒体条目；没有返回 null。 */
-export async function getMediaItem(id: string): Promise<MediaItem | null> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("media_items")
-    .select("*")
-    .eq("id", id)
-    .single();
-  if (error) return null;
-  return data as MediaItem;
 }
