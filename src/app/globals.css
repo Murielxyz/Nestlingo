@@ -130,6 +130,30 @@ body {
 .tiptap u {
   text-decoration: underline;
 }
+/* 精读「原文」块里的中文翻译：淡灰小字，跟在每段原文下方 */
+.tiptap .translation {
+  color: #a1a1aa;
+  font-size: 0.92em;
+}
+/* 日语精读「振り仮名」：片假名上方标注平假名读音 */
+.tiptap ruby.furigana,
+.share-content ruby.furigana {
+  ruby-align: center;
+}
+.tiptap ruby.furigana .furigana-rt,
+.share-content ruby.furigana .furigana-rt {
+  font-size: 0.62em;
+  color: #9ca3af;
+  line-height: 1;
+}
+/* 精读「已收录」标记：很淡的品牌色下划线，区分手动下划线（u）与高亮（mark） */
+.tiptap .collected-word {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklch, var(--brand) 42%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+  text-decoration-skip-ink: none;
+}
 .tiptap img {
   display: block;
   max-width: 100%;
@@ -219,16 +243,16 @@ body {
   margin: 0.75em 0;
 }
 .tiptap .callout[data-kind="word"] {
-  background: #f0f9ff;
-  border: 1px solid #bae6fd;
+  background: #f5faff;
+  border: 1px solid #dbeafe;
 }
 .tiptap .callout[data-kind="example"] {
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
+  background: #f5fdf7;
+  border: 1px solid #dcfce7;
 }
 .tiptap .callout[data-kind="grammar"] {
-  background: #faf5ff;
-  border: 1px solid #e9d5ff;
+  background: #fbf9fe;
+  border: 1px solid #ede9fe;
 }
 .tiptap .callout-label {
   font-size: 0.85em;
@@ -295,6 +319,10 @@ body {
 .share-content u {
   text-decoration: underline;
 }
+.share-content .translation {
+  color: #9ca3af;
+  font-size: 0.9em;
+}
 .share-content img {
   max-width: 100%;
   height: auto;
@@ -309,10 +337,14 @@ body {
 }
 .share-content table {
   border-collapse: collapse;
-  table-layout: fixed; /* 固定列宽，多列表格在 480px 图里不会被撑爆 */
+  table-layout: fixed; /* 固定列宽，多列表格在窄图里不会被撑爆 */
   width: 100%;
-  margin: 0.5em 0;
+  max-width: 100%;
+  margin: 0.5em auto; /* 水平居中 */
   overflow-wrap: anywhere;
+}
+.share-content col {
+  width: auto !important; /* 覆盖编辑器拖出来的固定列宽，列均分适应画幅，不横向溢出 */
 }
 .share-content th,
 .share-content td {
@@ -351,6 +383,43 @@ body {
 }
 .share-content .callout-body > p {
   margin: 0.25em 0;
+}
+
+/* 「笔记样式」分享视图：callout 按笔记内页配色渲染（浅色框 + 深色正文 + 彩色标签） */
+.share-content .callout[data-kind="word"],
+.share-content .callout[data-kind="example"],
+.share-content .callout[data-kind="grammar"] {
+  color: #27272a; /* 浅色框上强制深色正文，跟外层面板背景无关 */
+  opacity: 1;
+}
+.share-content .callout[data-kind="word"] {
+  background: #f5faff;
+  border: 1px solid #dbeafe;
+}
+.share-content .callout[data-kind="word"] .callout-label {
+  color: #38bdf8;
+}
+.share-content .callout[data-kind="example"] {
+  background: #f5fdf7;
+  border: 1px solid #dcfce7;
+}
+.share-content .callout[data-kind="example"] .callout-label {
+  color: #4ade80;
+}
+.share-content .callout[data-kind="grammar"] {
+  background: #fbf9fe;
+  border: 1px solid #ede9fe;
+}
+.share-content .callout[data-kind="grammar"] .callout-label {
+  color: #c084fc;
+}
+.share-content .callout[data-kind="article"] {
+  border: none;
+  background: transparent;
+  opacity: 1;
+}
+.share-content .callout[data-kind="article"] .callout-label {
+  color: #9ca3af;
 }
 
 /* ===== 内嵌媒体（编辑器 + 分享图里的占位） ===== */

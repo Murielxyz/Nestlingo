@@ -36,7 +36,14 @@ function blockText(node: JSONContent): string {
     case "callout": {
       // callout 序列化成一行「生词/例句/语法」标记 + 里面各块，让 parse-sections 能按区域切分。
       const kind = (node.attrs?.kind as string) ?? "word";
-      const label = kind === "example" ? "例句" : kind === "grammar" ? "语法" : "生词";
+      const label =
+        kind === "example"
+          ? "例句"
+          : kind === "grammar"
+            ? "语法"
+            : kind === "article"
+              ? "原文"
+              : "生词";
       return `${label}\n` + (node.content ?? []).map(blockText).join("");
     }
     case "paragraph":

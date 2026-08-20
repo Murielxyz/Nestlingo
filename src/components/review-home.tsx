@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { FlaskConical, Play } from "lucide-react";
+import { FlaskConical, Play, FolderOpen, Sparkles, BookX } from "lucide-react";
 import type { ReviewStats, CollectionSummary } from "@/lib/types";
 import type { ReviewItem } from "@/lib/supabase/queries";
 import { SpeakButton } from "./speak-button";
@@ -23,11 +24,11 @@ function collectionHref(c: CollectionSummary, mode?: string): string {
 
 /**
  * 复习页主页：
- * 1. 顶部标题 + 综合测试入口；
+ * 1. 顶部标题 + 错题集入口；
  * 2. 统计卡片组（今日已复习 / 到期待复习 / 已掌握 / 待加强）；
- * 3. 「正在背的合集」→ 继续背；
- * 4. 选择合集列表（背/测）；
- * 5. 待加强的卡。
+ * 3. 「正在背的合集」→ 继续背 / 测试 / 故事模式（都作用于当前合集）；
+ * 4. 待加强的卡；
+ * 5. 选择合集弹窗（切换「正在背」，背/测跟随切换）。
  */
 export function ReviewHome({
   stats,
@@ -39,31 +40,34 @@ export function ReviewHome({
   weakCards: ReviewItem[];
 }) {
   // 「正在背的合集」：优先最近复习过的那一个；都没复习过就取到期最多（或第一个）。
-  const current = (() => {
+  // 用户可在弹窗里切换，切换后记在 state 里。
+  const [current, setCurrent] = useState<CollectionSummary | null>(() => {
     const reviewed = collections
       .filter((c) => c.lastReviewedAt != null)
       .sort((a, b) => (b.lastReviewedAt ?? 0) - (a.lastReviewedAt ?? 0))[0];
     if (reviewed) return reviewed;
     return collections.find((c) => c.due > 0) ?? collections[0] ?? null;
-  })();
+  });
+  const [pickerOpen, setPickerOpen] = useState(false);
 
+  // 「到期待复习」只看「正在背的合集」里的新旧待复习卡（不数全局，避免随新卡越积越多）。
   const statCards = [
     { label: "今日已复习", value: stats.todayReviewed },
-    { label: "到期待复习", value: stats.due },
+    { label: "到期待复习", value: current?.due ?? 0 },
     { label: "已掌握", value: stats.mastered },
     { label: "待加强", value: stats.weak },
   ];
 
   return (
     <div>
-      <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <header className="mb-5 flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-zinc-900">复习</h1>
         <Link
-          href="/review?mode=test"
-          className="btn-brand"
+          href="/review?scope=errors"
+          className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-600 transition-colors hover:bg-zinc-50"
         >
-          <FlaskConical className="h-4 w-4" />
-          综合测试
+          <BookX className="h-4 w-4" />
+          错题集
         </Link>
       </header>
 
@@ -91,15 +95,35 @@ export function ReviewHome({
                   待复习 {current.due} · 共 {current.total}
                 </p>
               </div>
-            </div>
-            <div className="mt-4">
-              <Link
-                href={collectionHref(current)}
-                className="btn-brand w-full"
+              <button
+                onClick={() => setPickerOpen(true)}
+                className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-teal-200 px-3 py-1.5 text-sm font-medium text-teal-600 transition-colors hover:bg-teal-50"
               >
+                <FolderOpen className="h-4 w-4" />
+                选择合集
+              </button>
+            </div>
+            <div className="mt-4 space-y-2">
+              <Link href={collectionHref(current)} className="btn-brand w-full">
                 <Play className="h-4 w-4" />
                 继续背
               </Link>
+              <div className="grid grid-cols-2 gap-2">
+                <Link
+                  href={collectionHref(current, "test")}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-teal-200 px-4 py-2 text-sm font-semibold text-teal-600 transition-colors hover:bg-teal-50"
+                >
+                  <FlaskConical className="h-4 w-4" />
+                  测试
+                </Link>
+                <Link
+                  href={collectionHref(current, "story")}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-teal-200 px-4 py-2 text-sm font-semibold text-teal-600 transition-colors hover:bg-teal-50"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  故事模式
+                </Link>
+              </div>
             </div>
           </div>
         </section>
@@ -110,48 +134,6 @@ export function ReviewHome({
           </p>
         </section>
       )}
-
-      {/* 选择合集 */}
-      <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold text-zinc-700">选择合集</h2>
-        {collections.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500">
-            还没有闪卡。先去笔记里「⋯ → 转成闪卡」，或去「卡片」页添加。
-          </div>
-        ) : (
-          <ul className="space-y-2">
-            {collections.map((c) => (
-              <li
-                key={c.key}
-                className="card-soft flex items-center gap-3 px-4 py-3"
-              >
-                <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800">
-                  {c.title}
-                </span>
-                <span className="shrink-0 text-xs text-zinc-400">
-                  待复习 {c.due} · 共 {c.total}
-                </span>
-                <Link
-                  href={collectionHref(c)}
-                  className={`shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors ${
-                    c.due > 0
-                      ? "bg-teal-600 text-white hover:bg-teal-700"
-                      : "bg-zinc-100 text-zinc-400"
-                  }`}
-                >
-                  背
-                </Link>
-                <Link
-                  href={collectionHref(c, "test")}
-                  className="shrink-0 rounded-lg border border-teal-200 px-3 py-1.5 text-sm font-semibold text-teal-600 transition-colors hover:bg-teal-50"
-                >
-                  测
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
 
       {/* 待加强的卡 */}
       {weakCards.length > 0 && (
@@ -188,6 +170,89 @@ export function ReviewHome({
             ))}
           </ul>
         </section>
+      )}
+
+      {/* 选择合集弹窗：点某个合集即切换「正在背」，也可直接背/测 */}
+      {pickerOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4"
+          onClick={() => setPickerOpen(false)}
+        >
+          <div
+            className="flex max-h-[80vh] w-full flex-col rounded-t-2xl bg-white shadow-xl sm:max-w-lg sm:rounded-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="flex items-center justify-between border-b border-zinc-100 px-4 py-3">
+              <h2 className="text-base font-semibold text-zinc-900">选择要背的合集</h2>
+              <button
+                onClick={() => setPickerOpen(false)}
+                className="rounded-lg px-2 py-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                aria-label="关闭"
+              >
+                ✕
+              </button>
+            </header>
+            <div className="flex-1 overflow-y-auto px-4 py-3">
+              {collections.length === 0 ? (
+                <p className="py-8 text-center text-sm text-zinc-500">
+                  还没有闪卡。先去笔记里「⋯ → 转成闪卡」，或去「卡片」页添加。
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {collections.map((c) => {
+                    const active = current?.key === c.key;
+                    return (
+                      <li
+                        key={c.key}
+                        className={`flex items-center gap-3 rounded-xl border px-4 py-3 transition-colors ${
+                          active
+                            ? "border-teal-300 bg-teal-50"
+                            : "border-zinc-200 bg-white hover:border-teal-200"
+                        }`}
+                      >
+                        <button
+                          onClick={() => {
+                            setCurrent(c);
+                            setPickerOpen(false);
+                          }}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <span className="block truncate text-sm font-medium text-zinc-800">
+                            {c.title}
+                          </span>
+                          <span className="mt-0.5 block text-xs text-zinc-400">
+                            待复习 {c.due} · 共 {c.total}
+                          </span>
+                        </button>
+                        {active && (
+                          <span className="shrink-0 rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-700">
+                            正在背
+                          </span>
+                        )}
+                        <Link
+                          href={collectionHref(c)}
+                          className={`shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors ${
+                            c.due > 0
+                              ? "bg-teal-600 text-white hover:bg-teal-700"
+                              : "bg-zinc-100 text-zinc-400"
+                          }`}
+                        >
+                          背
+                        </Link>
+                        <Link
+                          href={collectionHref(c, "test")}
+                          className="shrink-0 rounded-lg border border-teal-200 px-3 py-1.5 text-sm font-semibold text-teal-600 transition-colors hover:bg-teal-50"
+                        >
+                          测
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

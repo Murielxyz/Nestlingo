@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toPng } from "html-to-image";
 import { generateHTML } from "@tiptap/core";
 import { editorExtensions } from "@/lib/editor-extensions";
+import { KIND_META } from "@/lib/callout-extension";
 import { docToText } from "@/lib/doc-to-text";
 import type { JSONContent } from "@tiptap/core";
 
@@ -49,6 +50,7 @@ const RATIOS: { key: RatioKey; label: string; h: number }[] = [
 
 type Part =
   | { kind: "title" }
+  | { kind: "label"; label: string; color: string }
   | { kind: "block"; index: number }
   | { kind: "footer" };
 
@@ -76,12 +78,16 @@ export function ShareModal({
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [bgKey, setBgKey] = useState<BgKey>("white");
   const [ratioKey, setRatioKey] = useState<RatioKey>("3:4");
+  // 分享视图：笔记样式（callout 带颜色整块保留） / 按条切页（长列表逐条分页）
+  const [viewMode, setViewMode] = useState<"note" | "flat">("note");
   const [editTitle, setEditTitle] = useState(title);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pages, setPages] = useState<Part[][]>([]);
   // 取消勾选的正文块（默认全选）。用「反选集合」表示，空集合 = 全部导出。
   const [deselected, setDeselected] = useState<Set<number>>(new Set());
+  const previewWrapRef = useRef<HTMLDivElement>(null);
+  const [previewScale, setPreviewScale] = useState(1);
 
   const bg = BACKGROUNDS.find((b) => b.key === bgKey)!;
   const ratio = RATIOS.find((r) => r.key === ratioKey)!;
@@ -96,26 +102,58 @@ export function ShareModal({
     );
   }, [content]);
 
-  const blockHtmls = useMemo<string[]>(() => {
-    // generateHTML 依赖 window.document，只在浏览器里能跑（本组件仅在点击后客户端渲染）。
-    if (typeof window === "undefined") return [];
-    return blocks.map((b) => {
-      try {
-        return generateHTML({ type: "doc", content: [b] }, editorExtensions);
-      } catch {
-        return "";
+  // 把选中的顶层块「摊平」成可独立切页的单元：callout 拆成「标签 + 内容」，列表拆成逐条，
+  // 这样生词/例句太多时可以按条切到多张图，而不是把整块裁掉。
+  const { flatHtmls, parts } = useMemo(() => {
+    const flatNodes: JSONContent[] = [];
+    const parts: Part[] = [{ kind: "title" }];
+
+    const addNode = (node: JSONContent) => {
+      flatNodes.push(node);
+      parts.push({ kind: "block", index: flatNodes.length - 1 });
+    };
+
+    const flatten = (node: JSONContent) => {
+      if (node.type === "bulletList" || node.type === "orderedList") {
+        // 列表逐条拆，每条渲染成一个单项列表（保留项目符号），也方便按条切页。
+        for (const li of node.content ?? []) {
+          addNode({ type: node.type, content: [li] });
+        }
+      } else {
+        addNode(node);
+      }
+    };
+
+    blocks.forEach((block, i) => {
+      if (deselected.has(i)) return;
+      if (viewMode === "flat" && block.type === "callout") {
+        // 按条切页：callout 拆成「标签 + 逐条内容」，超长时逐条分页
+        const kind = (block.attrs?.kind as string) ?? "word";
+        const meta = KIND_META[kind] ?? KIND_META.word;
+        parts.push({ kind: "label", label: meta.label, color: meta.color });
+        for (const child of block.content ?? []) flatten(child);
+      } else {
+        // 笔记样式：整块保留，callout 按笔记内页配色渲染（见 globals.css）
+        addNode(block);
       }
     });
-  }, [blocks]);
 
-  const parts = useMemo<Part[]>(() => {
-    const p: Part[] = [{ kind: "title" }];
-    blocks.forEach((_, i) => {
-      if (!deselected.has(i)) p.push({ kind: "block", index: i });
-    });
-    p.push({ kind: "footer" });
-    return p;
-  }, [blocks, deselected]);
+    parts.push({ kind: "footer" });
+
+    // generateHTML 依赖 window.document，只在浏览器里能跑（本组件仅在点击后客户端渲染）。
+    const flatHtmls =
+      typeof window === "undefined"
+        ? flatNodes.map(() => "")
+        : flatNodes.map((n) => {
+            try {
+              return generateHTML({ type: "doc", content: [n] }, editorExtensions);
+            } catch {
+              return "";
+            }
+          });
+
+    return { flatHtmls, parts };
+  }, [blocks, deselected, viewMode]);
 
   function toggleBlock(i: number) {
     setDeselected((prev) => {
@@ -127,6 +165,14 @@ export function ShareModal({
   }
 
   const selectedCount = blocks.length - deselected.size;
+  const allSelected = deselected.size === 0;
+
+  // 全选按钮：点一下全部选中，再点一下清空（之后自己逐条勾选）。
+  function toggleSelectAll() {
+    setDeselected((prev) =>
+      prev.size === 0 ? new Set(blocks.map((_, i) => i)) : new Set()
+    );
+  }
 
   // 测量每个部分的高度，按页高上限切分（标题自然落在第 1 页、页脚落在最后一页）。
   // 注意：测量容器外层还套了一个 flex 容器，所以取 el.firstElementChild 的 children 才是每个块。
@@ -152,7 +198,18 @@ export function ShareModal({
     });
     if (cur.length > 0) result.push(cur);
     setPages(result);
-  }, [parts, blockHtmls, editTitle, ratioKey, CONTENT_MAX]);
+  }, [parts, flatHtmls, editTitle, ratioKey, CONTENT_MAX]);
+
+  // 预览按容器宽度等比缩小，让整张图完整可见（不横向滚动、不放大画幅）。
+  useEffect(() => {
+    const el = previewWrapRef.current;
+    if (!el) return;
+    const update = () => setPreviewScale(Math.min(1, el.clientWidth / PAGE_WIDTH));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const bgStyle: React.CSSProperties =
     bgKey === "grid"
@@ -170,11 +227,24 @@ export function ShareModal({
     if (part.kind === "footer") {
       return <p className="text-xs" style={{ color: bg.sub }}>语巢 · Nestlingo</p>;
     }
+    if (part.kind === "label") {
+      return (
+        <div className="flex items-center gap-1.5">
+          <span
+            className="inline-block h-3 w-3 shrink-0 rounded-full"
+            style={{ background: part.color }}
+          />
+          <span className="text-sm font-semibold" style={{ color: part.color }}>
+            {part.label}
+          </span>
+        </div>
+      );
+    }
     return (
       <div
         className="share-content"
         style={{ color: bg.text }}
-        dangerouslySetInnerHTML={{ __html: blockHtmls[part.index] ?? "" }}
+        dangerouslySetInnerHTML={{ __html: flatHtmls[part.index] ?? "" }}
       />
     );
   }
@@ -269,6 +339,33 @@ export function ShareModal({
             </div>
           </div>
 
+          {/* 视图：笔记样式（callout 带颜色整块保留） / 按条切页（长列表逐条分页） */}
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-zinc-500">视图</p>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                onClick={() => setViewMode("note")}
+                className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${
+                  viewMode === "note"
+                    ? "bg-teal-50 text-teal-700 ring-2 ring-teal-300"
+                    : "border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+                }`}
+              >
+                笔记样式
+              </button>
+              <button
+                onClick={() => setViewMode("flat")}
+                className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${
+                  viewMode === "flat"
+                    ? "bg-teal-50 text-teal-700 ring-2 ring-teal-300"
+                    : "border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+                }`}
+              >
+                按条切页
+              </button>
+            </div>
+          </div>
+
           {/* 标题（可改） */}
           <div>
             <p className="mb-1.5 text-xs font-medium text-zinc-500">标题</p>
@@ -287,10 +384,10 @@ export function ShareModal({
                 选择内容（{selectedCount}/{blocks.length}）
               </p>
               <button
-                onClick={() => setDeselected(new Set())}
+                onClick={toggleSelectAll}
                 className="text-xs font-medium text-teal-600 hover:text-teal-700"
               >
-                全选
+                {allSelected ? "清空" : "全选"}
               </button>
             </div>
             {blocks.length === 0 ? (
@@ -321,32 +418,53 @@ export function ShareModal({
             <p className="mb-1.5 text-xs font-medium text-zinc-500">
               预览{pages.length > 1 ? `（共 ${pages.length} 张）` : ""}
             </p>
-            <div className="space-y-3 overflow-x-auto">
+            <div ref={previewWrapRef} className="space-y-3">
               {pages.length === 0 ? (
                 <p className="py-6 text-center text-xs text-zinc-400">生成预览中…</p>
               ) : (
                 pages.map((page, pi) => (
-                  <div key={pi} className="w-fit">
+                  <div key={pi} className="w-full">
                     <p className="mb-1 text-[11px] text-zinc-400">第 {pi + 1} 页</p>
                     <div
-                      ref={(el) => {
-                        pageRefs.current[pi] = el;
-                      }}
-                      className="flex flex-col overflow-hidden"
+                      className="overflow-hidden"
                       style={{
-                        width: PAGE_WIDTH,
-                        height: PAGE_HEIGHT,
-                        ...bgStyle,
-                        color: bg.text,
-                        fontFamily: FONT,
+                        width: PAGE_WIDTH * previewScale,
+                        height: PAGE_HEIGHT * previewScale,
                       }}
                     >
-                      <div className="flex flex-col p-8" style={{ gap: BLOCK_GAP }}>
-                        {page.map((part, i) => (
-                          <div key={i} style={{ overflow: "hidden" }}>
-                            {renderPart(part)}
+                      <div
+                        style={{
+                          transform: `scale(${previewScale})`,
+                          transformOrigin: "top left",
+                        }}
+                      >
+                        <div
+                          ref={(el) => {
+                            pageRefs.current[pi] = el;
+                          }}
+                          className="flex flex-col overflow-hidden"
+                          style={{
+                            width: PAGE_WIDTH,
+                            height: PAGE_HEIGHT,
+                            ...bgStyle,
+                            color: bg.text,
+                            fontFamily: FONT,
+                          }}
+                        >
+                          <div className="flex flex-1 flex-col p-8" style={{ gap: BLOCK_GAP }}>
+                            {page.map((part, i) => (
+                              <div
+                                key={i}
+                                style={{
+                                  overflow: "hidden",
+                                  marginTop: part.kind === "footer" ? "auto" : undefined,
+                                }}
+                              >
+                                {renderPart(part)}
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                        </div>
                       </div>
                     </div>
                   </div>

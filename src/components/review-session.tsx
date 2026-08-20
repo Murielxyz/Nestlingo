@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { PartyPopper } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { scheduleReview, dueAtFrom, DEFAULT_SCHEDULE, type Rating } from "@/lib/srs";
 import type { ReviewItem } from "@/lib/supabase/queries";
@@ -43,6 +44,22 @@ export function ReviewSession({
 
   const current = queue[0];
 
+  // 空格键翻面：输入框/文本域里打字不触发，会话结束后也不触发。
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.code !== "Space" || e.repeat) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
+        return;
+      }
+      if (!current) return;
+      e.preventDefault(); // 阻止页面滚动，也避免焦点在卡片按钮上时重复触发
+      setFlipped((f) => !f);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [current]);
+
   // 当前这张卡按某个评分会得到多长的间隔，用于评分按钮上的提示。
   const prev = current?.state
     ? {
@@ -56,7 +73,7 @@ export function ReviewSession({
   if (!current) {
     return (
       <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-16 text-center">
-        <p className="text-4xl">🎉</p>
+        <PartyPopper className="h-10 w-10 text-teal-500" />
         <p className="mt-4 text-lg font-semibold text-zinc-900">本轮复习完成！</p>
         <p className="mt-1 text-sm text-zinc-500">共复习 {reviewed} 张卡片。</p>
       </div>

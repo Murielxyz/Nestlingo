@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "语巢 · Nestlingo",
     short_name: "语巢",
-    description: "记录即背诵 —— 你的语言学习工作台",
+    description: "积词成巢 —— 你的语言学习工作台",
     start_url: "/notes",
     scope: "/",
     display: "standalone",

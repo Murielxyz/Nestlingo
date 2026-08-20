@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { FolderPlus, FileText, Folder, Search } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { NoteList } from "./notes-browser";
 import { NewNoteButton } from "./new-note-button";
-import type { Folder, Note } from "@/lib/types";
+import type { Folder as FolderType, Note } from "@/lib/types";
 
 /**
  * 笔记工作台（macOS 备忘录式三栏）：
@@ -21,7 +22,7 @@ export function NotesWorkspace({
   notes,
   children,
 }: {
-  folders: Folder[];
+  folders: FolderType[];
   notes: Note[];
   children: React.ReactNode;
 }) {
@@ -54,6 +55,24 @@ export function NotesWorkspace({
       );
     });
   }, [notes, selectedId, q]);
+
+  // 打开某篇笔记时文件夹栏自动收起（≡ 按钮仍在笔记列表栏顶部，可随时展开）。
+  useEffect(() => {
+    if (isNote) setCollapsed(true);
+  }, [isNote]);
+
+  // 笔记页（/notes/[id]）的列表显示全部笔记（忽略文件夹筛选），方便随时切到别的笔记。
+  const noteMatches = useMemo(
+    () =>
+      notes.filter((n) => {
+        if (!q) return true;
+        return (
+          n.title.toLowerCase().includes(q) ||
+          (n.content_text ?? "").toLowerCase().includes(q)
+        );
+      }),
+    [notes, q]
+  );
 
   const folderCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -89,7 +108,7 @@ export function NotesWorkspace({
     router.refresh();
   }
 
-  async function removeFolder(folder: Folder) {
+  async function removeFolder(folder: FolderType) {
     if (
       !window.confirm(`删除文件夹「${folder.name}」？里面的笔记会保留，变成无文件夹。`)
     ) {
@@ -102,68 +121,17 @@ export function NotesWorkspace({
     router.refresh();
   }
 
-  // 笔记正文页（/notes/[id]）：桌面端两栏（笔记列表 + 正文），不显示文件夹栏；手机端整页。
-  if (isNote) {
-    const noteMatches = notes.filter((n) => {
-      if (!q) return true;
-      return (
-        n.title.toLowerCase().includes(q) ||
-        (n.content_text ?? "").toLowerCase().includes(q)
-      );
-    });
-    return (
-      <div className="flex md:h-screen">
-        {/* 左：笔记列表（桌面） */}
-        <div className="hidden w-72 shrink-0 flex-col border-r border-zinc-200 bg-white md:flex">
-          <div className="flex items-center gap-0.5 border-b border-zinc-200 px-2.5 py-2">
-            <span className="min-w-0 flex-1 truncate px-1 text-sm font-semibold text-zinc-800">
-              笔记
-            </span>
-            <NewNoteButton folderId={null} />
-          </div>
-
-          <div className="px-3 pt-2.5">
-            <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5">
-              <span className="text-zinc-400">🔍</span>
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="搜索笔记…"
-                className="min-w-0 flex-1 bg-transparent text-sm text-zinc-800 placeholder-zinc-400 focus:outline-none"
-              />
-              {query && (
-                <button
-                  onClick={() => setQuery("")}
-                  className="text-sm text-zinc-400 hover:text-zinc-600"
-                  aria-label="清空搜索"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-2 py-2">
-            {noteMatches.length === 0 ? (
-              <p className="px-2 py-6 text-center text-sm text-zinc-400">
-                {q ? "没有匹配的笔记" : "还没有笔记"}
-              </p>
-            ) : (
-              <NoteList notes={noteMatches} query={query.trim()} folders={folders} showFolder={false} />
-            )}
-          </div>
-        </div>
-
-        {/* 右：正文 */}
-        <div className="min-w-0 flex-1 md:overflow-y-auto">{children}</div>
-      </div>
-    );
-  }
-
   // 其它子页面（闪卡页 / 文件夹页）：不套侧栏，直接整页铺满。
-  if (!isList) {
+  if (!isList && !isNote) {
     return <div className="min-w-0 flex-1">{children}</div>;
   }
+
+  // /notes 与 /notes/[id] 共用同一套侧栏：文件夹栏 + 笔记列表 + 内容。
+  // 区别在于 /notes/[id] 时文件夹栏默认收起、列表显示全部笔记。
+  const listNotes = isNote ? noteMatches : filtered;
+  const headerTitle = isNote ? "笔记" : listTitle;
+  const showFolderTag = isNote ? false : selectedId === "all";
+  const newNoteFolderId = isNote ? null : selectedId === "all" ? null : selectedId;
 
   return (
     <div className="flex md:h-screen">
@@ -184,11 +152,11 @@ export function NotesWorkspace({
             </span>
             <button
               onClick={() => setShowNewFolder((v) => !v)}
-              className="rounded-lg p-1.5 text-sm text-zinc-500 transition-colors hover:bg-zinc-100"
+              className="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100"
               aria-label="新建文件夹"
               title="新建文件夹"
             >
-              📁＋
+              <FolderPlus className="h-4 w-4" />
             </button>
           </div>
 
@@ -226,7 +194,7 @@ export function NotesWorkspace({
                   : "text-zinc-700 hover:bg-zinc-100"
               }`}
             >
-              <span>📝</span>
+              <FileText className="h-4 w-4 shrink-0" />
               <span className="min-w-0 flex-1 truncate">全部笔记</span>
               <span className="text-xs text-zinc-400">{notes.length}</span>
             </button>
@@ -237,7 +205,7 @@ export function NotesWorkspace({
               if (editingId === folder.id) {
                 return (
                   <div key={folder.id} className="mt-0.5 flex items-center gap-1 px-1">
-                    <span>📁</span>
+                    <Folder className="h-4 w-4 shrink-0 text-zinc-400" />
                     <input
                       value={editingName}
                       onChange={(e) => setEditingName(e.target.value)}
@@ -273,7 +241,7 @@ export function NotesWorkspace({
                         : "text-zinc-700 hover:bg-zinc-100"
                     }`}
                   >
-                    <span>📁</span>
+                    <Folder className="h-4 w-4 shrink-0 text-zinc-400" />
                     <span className="min-w-0 flex-1 truncate">{folder.name}</span>
                     <span className="text-xs text-zinc-400">{count}</span>
                   </button>
@@ -335,14 +303,14 @@ export function NotesWorkspace({
             </button>
           )}
           <span className="min-w-0 flex-1 truncate px-1 text-sm font-semibold text-zinc-800">
-            {listTitle}
+            {headerTitle}
           </span>
-          <NewNoteButton folderId={selectedId === "all" ? null : selectedId} />
+          <NewNoteButton folderId={newNoteFolderId} />
         </div>
 
         <div className="px-3 pt-2.5">
           <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5">
-            <span className="text-zinc-400">🔍</span>
+            <Search className="h-4 w-4 shrink-0 text-zinc-400" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -362,16 +330,16 @@ export function NotesWorkspace({
         </div>
 
         <div className="flex-1 overflow-y-auto px-2 py-2">
-          {filtered.length === 0 ? (
+          {listNotes.length === 0 ? (
             <p className="px-2 py-6 text-center text-sm text-zinc-400">
               {q ? "没有匹配的笔记" : "还没有笔记"}
             </p>
           ) : (
             <NoteList
-              notes={filtered}
+              notes={listNotes}
               query={query.trim()}
               folders={folders}
-              showFolder={selectedId === "all"}
+              showFolder={showFolderTag}
             />
           )}
         </div>

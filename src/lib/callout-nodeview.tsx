@@ -5,7 +5,7 @@
 // 这样「分享图 / 转成闪卡」看到的 HTML 与编辑器里一致。
 
 import { NodeViewWrapper, NodeViewContent } from "@tiptap/react";
-import { Sprout, MessageSquare, Puzzle } from "lucide-react";
+import { Sprout, MessageSquare, Puzzle, ScrollText } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { KIND_META } from "./callout-extension";
 
@@ -13,6 +13,7 @@ const KIND_ICON: Record<string, LucideIcon> = {
   word: Sprout,
   example: MessageSquare,
   grammar: Puzzle,
+  article: ScrollText,
 };
 
 export function CalloutNodeView({ node }: { node: { attrs: { kind?: string } } }) {

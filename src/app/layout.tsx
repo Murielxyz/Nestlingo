@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     default: "语巢 · Nestlingo",
     template: "%s · 语巢",
   },
-  description: "记录即背诵 —— 你的语言学习工作台。粘贴任何内容，一键变成闪卡。",
+  description: "积词成巢 —— 你的语言学习工作台。粘贴任何内容，一键变成闪卡。",
   applicationName: "语巢 · Nestlingo",
   appleWebApp: {
     capable: true,

@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { detectLang, speechLang, type Lang } from "@/lib/lang-detect";
+import { Volume2, Volume1 } from "lucide-react";
+import { detectLang, speechLang, cleanForSpeech, type Lang } from "@/lib/lang-detect";
+import { pickVoice, isNaturalVoice } from "@/lib/speech";
 
 /** 语言码映射成 Google TTS 的 tl 参数。 */
 function googleLang(lang: Lang): string {
@@ -72,8 +74,12 @@ export function SpeakButton({
       setSpeaking(false);
       return;
     }
+    const lang = detectLang(text);
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = speechLang(detectLang(text));
+    u.lang = speechLang(lang);
+    // 挑一个更自然的本地音色（默认音色往往很机器）。
+    const voice = pickVoice(lang);
+    if (voice) u.voice = voice;
     u.rate = 0.9;
     u.onend = () => setSpeaking(false);
     u.onerror = () => setSpeaking(false);
@@ -86,10 +92,21 @@ export function SpeakButton({
     if (!text.trim() || typeof window === "undefined") return;
     stopAll();
 
-    // 太长会被 Google 拒，截断到 200 字（单词/句子基本都够）。
-    const q = text.trim().slice(0, 200);
+    // 去掉罗马读音（泰语「สวัสดี sawadee」只读泰语），再截断到 200 字。
+    const cleaned = cleanForSpeech(text);
+    const q = (cleaned || text).trim().slice(0, 200);
+    const lang = detectLang(q);
+
+    // 系统有「更接近真人」的音色（如 macOS Siri、微软/谷歌神经音）就优先用它，
+    // 尤其是韩语；没有合适的音色再走 Google 在线 TTS。
+    const voice = pickVoice(lang);
+    if (voice && isNaturalVoice(voice)) {
+      synthSpeak(q);
+      return;
+    }
+
     const url = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${googleLang(
-      detectLang(q)
+      lang
     )}&q=${encodeURIComponent(q)}`;
 
     const audio = new Audio(url);
@@ -103,7 +120,7 @@ export function SpeakButton({
         timerRef.current = null;
       }
       audioRef.current = null;
-      synthSpeak(text);
+      synthSpeak(cleaned || text);
     };
     // 2.5 秒内没开始播放（网络慢/被墙）就退回系统语音。
     timerRef.current = window.setTimeout(fallback, 2500);
@@ -132,7 +149,11 @@ export function SpeakButton({
         "shrink-0 rounded-lg px-2 py-1 text-base leading-none text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
       }
     >
-      {speaking ? "🔊" : "🔉"}
+      {speaking ? (
+        <Volume2 className="h-4 w-4" />
+      ) : (
+        <Volume1 className="h-4 w-4" />
+      )}
     </button>
   );
 }

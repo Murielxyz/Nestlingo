@@ -1,23 +1,34 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { CircleCheck, SkipForward } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { parseCards, type ParsedCard } from "@/lib/parse-cards";
-import { parseSections, type CardSection } from "@/lib/parse-sections";
+import { parseNote, type CardSection } from "@/lib/parse-sections";
 import type { RecognitionRules } from "@/lib/types";
 
-const KIND_LABEL: Record<"word" | "example" | "grammar", string> = {
+const KIND_LABEL: Record<CardSection["kind"], string> = {
   word: "生词",
   example: "例句",
   grammar: "语法",
 };
 
+const KIND_ORDER: CardSection["kind"][] = ["word", "example", "grammar"];
+
+/** 去重比较时，把正面里「（读音）」这类括号内容过滤掉，只看词本身是否相同（如「สวัสดี（sà-wàt-dii）」≈「สวัสดี」）。 */
+function normalizeFront(front: string): string {
+  return front
+    .replace(/[（(][^（）()]*[）)]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /**
- * 「转成闪卡」弹窗：把笔记文本用规则解析成候选卡片。
- * - 笔记里有「生词 / 例句」标题时：按区域切分，分别生成「生词」「例句」两个合集（带 kind）。
- * - 没有这些标题时：维持整篇解析（向后兼容）。
- * - 顶部源文本框（仅整篇模式）可改可粘贴；卡片可编辑/删除；自动去重。
+ * 「转成闪卡」弹窗：把笔记文本按识别规则解析成候选卡片。
+ * - 笔记里的「生词 / 例句 / 语法」callout → 各自一组（带 kind）。
+ * - callout 之外的表格 / 「词—释义」行 → 归入「生词」组（普通段落跳过）。
+ * - 同类的多个区块合并成一组；勾了「只识别 callout」则只收 callout 内的内容。
+ * - 卡片可编辑/删除，自动去重（已存在的正面会跳过）。
  */
 export function ConvertToCards({
   noteId,
@@ -29,21 +40,15 @@ export function ConvertToCards({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const initialSections = useMemo(() => parseSections(text), [text]);
-  // 一旦确定是「区域模式」就固定，不因预览里删空而切换回整篇。
-  const [mode] = useState<"sections" | "flat">(() =>
-    initialSections.length > 0 ? "sections" : "flat"
-  );
-  const [sections, setSections] = useState<CardSection[]>(initialSections);
-  const [source, setSource] = useState(text);
-  const [flat, setFlat] = useState<ParsedCard[]>(() =>
-    initialSections.length > 0 ? [] : parseCards(text)
-  );
+  const [sections, setSections] = useState<CardSection[]>([]);
   const [existingFronts, setExistingFronts] = useState<Set<string>>(new Set());
-  const [rules, setRules] = useState<RecognitionRules | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // 默认三类全选；可取消勾选某类（如只转生词、跳过例句/语法）。
+  const [selectedKinds, setSelectedKinds] = useState<Set<CardSection["kind"]>>(
+    () => new Set(KIND_ORDER)
+  );
 
   // 打开时拉取这篇笔记已有的卡片正面，用于去重。
   useEffect(() => {
@@ -55,7 +60,7 @@ export function ConvertToCards({
         .select("front")
         .eq("note_id", noteId);
       if (cancelled) return;
-      const fronts = new Set((data ?? []).map((c) => c.front.trim()));
+      const fronts = new Set((data ?? []).map((c) => normalizeFront(c.front)));
       setExistingFronts(fronts);
     })();
     return () => {
@@ -63,7 +68,7 @@ export function ConvertToCards({
     };
   }, [noteId]);
 
-  // 打开时拉取自定义识别规则，加载后用它重新解析（不影响「区域/整篇」模式判定）。
+  // 打开时拉取识别规则并解析笔记文本。
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -74,38 +79,27 @@ export function ConvertToCards({
         .limit(1)
         .maybeSingle();
       if (cancelled) return;
-      const r = (data?.recognition_rules ?? null) as RecognitionRules | null;
-      setRules(r);
-      setSections(parseSections(text, r));
-      setFlat(parseCards(text, r));
+      const rules = (data?.recognition_rules ?? null) as RecognitionRules | null;
+      const { sections: secs, rest } = parseNote(text, rules);
+
+      // 勾了「只在 callout 内识别」：只收 callout；否则把 callout 之外的表格/词表也并入「生词」。
+      // 若自定义分隔规则给某张卡标了类型（例句/语法），按类型归到对应分组，而不是一律塞进「生词」。
+      if (!rules?.calloutOnly && rest.length > 0) {
+        for (const c of rest) {
+          const kind: CardSection["kind"] = c.kind ?? "word";
+          const target = secs.find((s) => s.kind === kind);
+          if (target) target.cards.push(c);
+          else secs.push({ kind, title: KIND_LABEL[kind], cards: [c] });
+        }
+      }
+      setSections(secs);
     })();
     return () => {
       cancelled = true;
     };
   }, [text]);
 
-  function reparse() {
-    setFlat(parseCards(source, rules));
-    setError(null);
-  }
-
-  // —— 整篇模式（无区域标题）——
-  function updateFlat(i: number, field: "front" | "back", value: string) {
-    setFlat((prev) =>
-      prev.map((c, idx) => (idx === i ? { ...c, [field]: value } : c))
-    );
-  }
-  function removeFlat(i: number) {
-    setFlat((prev) => prev.filter((_, idx) => idx !== i));
-  }
-
-  // —— 区域模式 ——
-  function updateSectionCard(
-    si: number,
-    ci: number,
-    field: "front" | "back",
-    value: string
-  ) {
+  function updateCard(si: number, ci: number, field: "front" | "back", value: string) {
     setSections((prev) =>
       prev.map((s, idx) =>
         idx === si
@@ -119,7 +113,8 @@ export function ConvertToCards({
       )
     );
   }
-  function removeSectionCard(si: number, ci: number) {
+
+  function removeCard(si: number, ci: number) {
     setSections((prev) =>
       prev.map((s, idx) =>
         idx === si ? { ...s, cards: s.cards.filter((_, i) => i !== ci) } : s
@@ -127,48 +122,42 @@ export function ConvertToCards({
     );
   }
 
-  const allCards =
-    mode === "sections"
-      ? sections.flatMap((s) => s.cards)
-      : flat;
-  const dupCount = allCards.filter((c) => existingFronts.has(c.front.trim())).length;
+  function toggleKind(kind: CardSection["kind"]) {
+    setSelectedKinds((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  }
+
+  const visibleSections = sections.filter((s) => selectedKinds.has(s.kind));
+  const allCards = visibleSections.flatMap((s) => s.cards);
+  const dupCount = allCards.filter((c) => existingFronts.has(normalizeFront(c.front))).length;
+  const newCount = allCards.length - dupCount;
 
   async function save() {
     const supabase = createClient();
-
-    const rows =
-      mode === "sections"
-        ? (() => {
-            const out: {
-              note_id: string;
-              front: string;
-              back: string;
-              kind: string;
-              position: number;
-            }[] = [];
-            let pos = 0;
-            for (const s of sections) {
-              for (const c of s.cards) {
-                if (!c.front.trim() || existingFronts.has(c.front.trim())) continue;
-                out.push({
-                  note_id: noteId,
-                  front: c.front.trim(),
-                  back: c.back.trim(),
-                  kind: s.kind,
-                  position: pos++,
-                });
-              }
-            }
-            return out;
-          })()
-        : flat
-            .filter((c) => c.front.trim() && !existingFronts.has(c.front.trim()))
-            .map((c, i) => ({
-              note_id: noteId,
-              front: c.front.trim(),
-              back: c.back.trim(),
-              position: i,
-            }));
+    const rows: {
+      note_id: string;
+      front: string;
+      back: string;
+      kind: CardSection["kind"];
+      position: number;
+    }[] = [];
+    let pos = 0;
+    for (const s of visibleSections) {
+      for (const c of s.cards) {
+        if (!c.front.trim() || existingFronts.has(normalizeFront(c.front))) continue;
+        rows.push({
+          note_id: noteId,
+          front: c.front.trim(),
+          back: c.back.trim(),
+          kind: s.kind,
+          position: pos++,
+        });
+      }
+    }
 
     if (rows.length === 0) {
       setError(dupCount > 0 ? "没有新的卡片可入库（都已存在）。" : "没有可入库的卡片。");
@@ -187,11 +176,9 @@ export function ConvertToCards({
   }
 
   const summary =
-    mode === "sections"
-      ? sections
-          .map((s) => `${KIND_LABEL[s.kind]} ${s.cards.length} 张`)
-          .join(" · ")
-      : `识别出 ${flat.length} 张${dupCount > 0 ? `，其中 ${dupCount} 张已存在将跳过` : ""}。`;
+    allCards.length > 0
+      ? `识别出 ${allCards.length} 张${dupCount > 0 ? `，跳过重复 ${dupCount} 张` : ""}`
+      : "没识别出卡片";
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4">
@@ -199,9 +186,7 @@ export function ConvertToCards({
         <header className="flex items-start justify-between border-b border-zinc-100 px-4 py-3">
           <div>
             <h2 className="text-base font-semibold text-zinc-900">转成闪卡</h2>
-            <p className="mt-0.5 text-xs text-zinc-500">
-              {done ? "已入库。" : summary}
-            </p>
+            <p className="mt-0.5 text-xs text-zinc-500">{done ? "已入库。" : summary}</p>
           </div>
           <button
             onClick={onClose}
@@ -214,7 +199,7 @@ export function ConvertToCards({
 
         {done ? (
           <div className="px-4 py-10 text-center">
-            <p className="text-3xl">✅</p>
+            <CircleCheck className="mx-auto h-10 w-10 text-teal-500" />
             <p className="mt-3 text-sm text-zinc-700">
               已生成新卡片。去「卡片」页或这篇笔记的闪卡里看看。
             </p>
@@ -227,29 +212,42 @@ export function ConvertToCards({
           </div>
         ) : (
           <>
-            {mode === "flat" && (
-              <div className="border-b border-zinc-100 px-4 py-3">
-                <div className="mb-1.5 flex items-center justify-between">
-                  <span className="text-xs font-medium text-zinc-500">
-                    来源文本（可直接粘贴 Excel / Sheets 表格）
-                  </span>
+            {/* 按类型勾选要收录的卡片（生词/例句/语法，默认全选，可取消某类） */}
+            <div className="flex flex-wrap items-center gap-1.5 border-b border-zinc-100 px-4 py-2.5">
+              <span className="mr-1 text-xs text-zinc-400">收录类型：</span>
+              {KIND_ORDER.map((kind) => {
+                const sec = sections.find((s) => s.kind === kind);
+                if (!sec || sec.cards.length === 0) return null;
+                const cnt = sec.cards.filter(
+                  (c) => !existingFronts.has(normalizeFront(c.front))
+                ).length;
+                const active = selectedKinds.has(kind);
+                return (
                   <button
-                    onClick={reparse}
-                    className="rounded-md px-2 py-1 text-xs font-medium text-teal-600 hover:bg-teal-50"
+                    key={kind}
+                    onClick={() => toggleKind(kind)}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors ${
+                      active
+                        ? "border-teal-500 bg-teal-50 text-teal-700"
+                        : "border-zinc-200 bg-white text-zinc-400"
+                    }`}
                   >
-                    重新识别
+                    <span
+                      className={`flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[10px] ${
+                        active
+                          ? "border-teal-500 bg-teal-500 text-white"
+                          : "border-zinc-300 bg-white text-transparent"
+                      }`}
+                    >
+                      ✓
+                    </span>
+                    {KIND_LABEL[kind]} {cnt}
                   </button>
-                </div>
-                <textarea
-                  value={source}
-                  onChange={(e) => setSource(e.target.value)}
-                  rows={3}
-                  className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 focus:border-teal-500 focus:outline-none"
-                />
-              </div>
-            )}
+                );
+              })}
+            </div>
 
-            {/* 卡片预览 */}
+            {/* 卡片预览（按生词/例句/语法分组，已存在的正面不再逐张展示） */}
             <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
               {allCards.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500">
@@ -257,50 +255,55 @@ export function ConvertToCards({
                   <br />
                   请让内容是：每行「词 — 释义」「词：释义」「词  释义」（两个空格），
                   <br />
-                  或从 Excel / Sheets 粘贴带「词汇 / 读音 / 释义」列的表格。
+                  从 Excel / Sheets 粘贴带「词汇 / 释义」列的表格，
+                  <br />
+                  或用工具栏的「生词 / 例句 / 语法」块框住内容。
+                  <br />
+                  整篇文章、两栏原文/译文不会被转成卡片。
                 </div>
-              ) : mode === "flat" ? (
-                flat.map((c, i) => {
-                  const isDup = existingFronts.has(c.front.trim());
-                  return (
-                    <CardDraft
-                      key={i}
-                      front={c.front}
-                      back={c.back}
-                      isDup={isDup}
-                      onChange={(field, value) => updateFlat(i, field, value)}
-                      onRemove={() => removeFlat(i)}
-                    />
-                  );
-                })
+              ) : newCount === 0 ? (
+                <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500">
+                  识别出的 {allCards.length} 张都已在库里（正面文字已存在），没有新卡片。
+                </div>
               ) : (
-                sections.map((s, si) => (
-                  <section key={si}>
-                    <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-zinc-700">
-                      <span>{s.title}</span>
-                      <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-normal text-zinc-500">
-                        {KIND_LABEL[s.kind]} · {s.cards.length} 张
-                      </span>
-                    </h3>
-                    <div className="space-y-3">
-                      {s.cards.map((c, ci) => {
-                        const isDup = existingFronts.has(c.front.trim());
-                        return (
-                          <CardDraft
-                            key={ci}
-                            front={c.front}
-                            back={c.back}
-                            isDup={isDup}
-                            onChange={(field, value) =>
-                              updateSectionCard(si, ci, field, value)
-                            }
-                            onRemove={() => removeSectionCard(si, ci)}
-                          />
-                        );
-                      })}
-                    </div>
-                  </section>
-                ))
+                <>
+                  {dupCount > 0 && (
+                    <p className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                      <SkipForward className="h-3.5 w-3.5 shrink-0" />
+                      已跳过 {dupCount} 张重复（正面文字已存在，无需重复收录）。
+                    </p>
+                  )}
+                  {visibleSections.map((s, si) => {
+                    const newCards = s.cards.filter(
+                      (c) => !existingFronts.has(normalizeFront(c.front))
+                    );
+                    if (newCards.length === 0) return null;
+                    return (
+                      <section key={`${s.kind}-${si}`}>
+                        <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-zinc-700">
+                          <span>{s.title}</span>
+                          <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-normal text-zinc-500">
+                            {KIND_LABEL[s.kind]} · {newCards.length} 张
+                          </span>
+                        </h3>
+                        <div className="space-y-3">
+                          {s.cards.map((c, ci) => {
+                            if (existingFronts.has(normalizeFront(c.front))) return null;
+                            return (
+                              <CardDraft
+                                key={ci}
+                                front={c.front}
+                                back={c.back}
+                                onChange={(field, value) => updateCard(si, ci, field, value)}
+                                onRemove={() => removeCard(si, ci)}
+                              />
+                            );
+                          })}
+                        </div>
+                      </section>
+                    );
+                  })}
+                </>
               )}
             </div>
 
@@ -313,10 +316,10 @@ export function ConvertToCards({
               </button>
               <button
                 onClick={save}
-                disabled={saving || allCards.length - dupCount <= 0}
+                disabled={saving || newCount <= 0}
                 className="flex-1 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
               >
-                {saving ? "入库中…" : `确认入库 ${allCards.length - dupCount} 张`}
+                {saving ? "入库中…" : `确认入库 ${newCount} 张`}
               </button>
             </footer>
 
@@ -331,27 +334,16 @@ export function ConvertToCards({
 function CardDraft({
   front,
   back,
-  isDup,
   onChange,
   onRemove,
 }: {
   front: string;
   back: string;
-  isDup: boolean;
   onChange: (field: "front" | "back", value: string) => void;
   onRemove: () => void;
 }) {
   return (
-    <div
-      className={`space-y-2 rounded-xl border p-3 ${
-        isDup ? "border-dashed border-zinc-200 bg-zinc-50 opacity-60" : "border-zinc-200 bg-white"
-      }`}
-    >
-      {isDup && (
-        <p className="text-xs font-medium text-amber-600">
-          ⏭ 已存在，跳过（想重新收录可改正面文字）
-        </p>
-      )}
+    <div className="space-y-2 rounded-xl border border-zinc-200 bg-white p-3">
       <input
         value={front}
         onChange={(e) => onChange("front", e.target.value)}

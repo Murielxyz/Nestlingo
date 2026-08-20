@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { NotebookPen, RefreshCw, Layers, Tags, Settings } from "lucide-react";
+import { NotebookPen, RefreshCw, Layers, Settings } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { BrandMark } from "./brand-mark";
@@ -12,7 +12,6 @@ const NAV_ITEMS: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/notes", label: "笔记", icon: NotebookPen },
   { href: "/review", label: "复习", icon: RefreshCw },
   { href: "/cards", label: "卡片", icon: Layers },
-  { href: "/groups", label: "词群", icon: Tags },
   { href: "/settings", label: "设置", icon: Settings },
 ];
 

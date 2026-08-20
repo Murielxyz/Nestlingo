@@ -11,9 +11,10 @@ import { ReactNodeViewRenderer } from "@tiptap/react";
 import { CalloutNodeView } from "./callout-nodeview";
 
 export const KIND_META: Record<string, { label: string; color: string }> = {
-  word: { label: "生词", color: "#0ea5e9" },
-  example: { label: "例句", color: "#22c55e" },
-  grammar: { label: "语法", color: "#a855f7" },
+  word: { label: "生词", color: "#38bdf8" },
+  example: { label: "例句", color: "#4ade80" },
+  grammar: { label: "语法", color: "#c084fc" },
+  article: { label: "原文", color: "#a1a1aa" },
 };
 
 export function calloutLabel(kind: string): string {

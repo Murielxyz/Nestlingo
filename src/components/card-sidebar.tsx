@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Layers, Pencil, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Card } from "@/lib/types";
 
@@ -16,9 +17,11 @@ const KIND_LABEL: Record<string, string> = {
 export function CardSidebar({
   noteId,
   onClose,
+  onConvert,
 }: {
   noteId: string;
   onClose: () => void;
+  onConvert: () => void;
 }) {
   const [cards, setCards] = useState<Card[] | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -100,8 +103,9 @@ export function CardSidebar({
   return (
     <aside className="flex w-full shrink-0 flex-col border-l border-zinc-200 bg-zinc-50 md:w-[380px]">
       <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-3 py-2">
-        <h2 className="text-sm font-semibold text-zinc-800">
-          🃏 闪卡{cards ? `（${cards.length}）` : ""}
+        <h2 className="flex items-center gap-1.5 text-sm font-semibold text-zinc-800">
+          <Layers className="h-4 w-4 text-teal-600" />
+          闪卡{cards ? `（${cards.length}）` : ""}
         </h2>
         <button
           onClick={onClose}
@@ -135,12 +139,20 @@ export function CardSidebar({
       )}
 
       <div className="flex-1 space-y-2 overflow-y-auto p-3">
-        <button
-          onClick={() => setAddOpen((v) => !v)}
-          className="w-full rounded-lg border border-dashed border-zinc-300 px-3 py-2 text-sm text-zinc-600 transition-colors hover:border-teal-300 hover:text-teal-600"
-        >
-          ＋ 添加闪卡
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setAddOpen((v) => !v)}
+            className="flex-1 rounded-lg border border-dashed border-zinc-300 px-3 py-2 text-sm text-zinc-600 transition-colors hover:border-teal-300 hover:text-teal-600"
+          >
+            ＋ 添加闪卡
+          </button>
+          <button
+            onClick={onConvert}
+            className="flex-1 rounded-lg border border-dashed border-teal-300 px-3 py-2 text-sm text-teal-600 transition-colors hover:bg-teal-50"
+          >
+            转成闪卡
+          </button>
+        </div>
 
         {addOpen && (
           <form
@@ -185,7 +197,7 @@ export function CardSidebar({
           <p className="py-6 text-center text-xs text-zinc-400">
             还没有闪卡。
             <br />
-            点上方「＋ 添加」手动加，或回笔记「⋯ → 转成闪卡」。
+            点上方「＋ 添加」手动加，或「转成闪卡」从笔记内容识别。
           </p>
         ) : (
           visibleCards.map((c) =>
@@ -232,17 +244,17 @@ export function CardSidebar({
                   <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                     <button
                       onClick={() => startEdit(c)}
-                      className="rounded p-1 text-xs text-zinc-400 hover:text-zinc-700"
+                      className="rounded p-1 text-zinc-400 hover:text-zinc-700"
                       aria-label="编辑"
                     >
-                      ✏️
+                      <Pencil className="h-3.5 w-3.5" />
                     </button>
                     <button
                       onClick={() => deleteCard(c.id)}
-                      className="rounded p-1 text-xs text-zinc-400 hover:text-red-600"
+                      className="rounded p-1 text-zinc-400 hover:text-red-600"
                       aria-label="删除"
                     >
-                      🗑
+                      <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 </div>

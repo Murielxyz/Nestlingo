@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { FileText, Pencil, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Card } from "@/lib/types";
 import { SpeakButton } from "./speak-button";
@@ -67,9 +68,10 @@ export function CardDetail({
           {card.note_title && (
             <Link
               href={`/notes/${card.note_id}/cards`}
-              className="block truncate text-xs text-zinc-400 transition-colors hover:text-zinc-600"
+              className="flex items-center gap-1 truncate text-xs text-zinc-400 transition-colors hover:text-zinc-600"
             >
-              📝 {card.note_title}
+              <FileText className="h-3 w-3 shrink-0" />
+              {card.note_title}
             </Link>
           )}
         </div>
@@ -148,15 +150,17 @@ export function CardDetail({
                 setBack(card.back ?? "");
                 setEditing(true);
               }}
-              className="flex-1 rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 transition-colors hover:bg-zinc-50"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 transition-colors hover:bg-zinc-50"
             >
-              ✏️ 编辑
+              <Pencil className="h-4 w-4" />
+              编辑
             </button>
             <button
               onClick={deleteCard}
-              className="flex-1 rounded-lg border border-zinc-200 px-4 py-2 text-sm text-red-600 transition-colors hover:bg-red-50"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-200 px-4 py-2 text-sm text-red-600 transition-colors hover:bg-red-50"
             >
-              🗑 删除
+              <Trash2 className="h-4 w-4" />
+              删除
             </button>
           </div>
         </>

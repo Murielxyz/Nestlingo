@@ -3,10 +3,11 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Search, FolderPlus, Folder, FileText } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { NewNoteButton } from "./new-note-button";
 import { EmptyState } from "./empty-state";
-import type { Folder, Note } from "@/lib/types";
+import type { Folder as FolderType, Note } from "@/lib/types";
 
 /**
  * 笔记 + 文件夹合并视图：以「文件夹」和「笔记文件」为主。
@@ -19,7 +20,7 @@ export function NotesBrowser({
   folders,
   notes,
 }: {
-  folders: Folder[];
+  folders: FolderType[];
   notes: Note[];
 }) {
   const router = useRouter();
@@ -31,6 +32,7 @@ export function NotesBrowser({
   const [editingName, setEditingName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState<"folders" | "all">("folders");
 
   const q = query.trim().toLowerCase();
   const matches = (n: Note) =>
@@ -46,8 +48,10 @@ export function NotesBrowser({
     return m;
   }, [notes]);
 
-  // 手机端：文件夹和（没有文件夹的）笔记平铺在一起；点文件夹进它的笔记列表，点笔记进正文。
-  const unfiled = notes.filter((n) => n.folder_id === null).filter(matches);
+  // 手机端：置顶「全部笔记」（展开显示所有笔记，含文件夹内的），下面列文件夹。
+  // 点文件夹进它的笔记列表，点笔记进正文。
+  const allNotes = notes.filter(matches);
+  const unfiledNotes = notes.filter((n) => !n.folder_id && matches(n));
   const visibleFolders = folders.filter(
     (f) => !q || f.name.toLowerCase().includes(q)
   );
@@ -84,7 +88,7 @@ export function NotesBrowser({
     router.refresh();
   }
 
-  async function removeFolder(folder: Folder) {
+  async function removeFolder(folder: FolderType) {
     if (
       !window.confirm(
         `删除文件夹「${folder.name}」？里面的笔记会保留，变成无文件夹。`
@@ -110,7 +114,7 @@ export function NotesBrowser({
       {/* 搜索框 + 新建笔记 / 新建文件夹 */}
       <div className="mb-4 flex items-center gap-2">
         <div className="flex flex-1 items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2">
-          <span className="text-zinc-400">🔍</span>
+          <Search className="h-4 w-4 shrink-0 text-zinc-400" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -131,9 +135,10 @@ export function NotesBrowser({
         <button
           onClick={() => setShowNewFolder((v) => !v)}
           title="新建文件夹"
-          className="rounded-lg border border-zinc-200 px-2.5 py-2 text-sm text-zinc-600 transition-colors hover:bg-zinc-50"
+          aria-label="新建文件夹"
+          className="rounded-lg border border-zinc-200 px-2.5 py-2 text-zinc-600 transition-colors hover:bg-zinc-50"
         >
-          📁＋
+          <FolderPlus className="h-4 w-4" />
         </button>
       </div>
 
@@ -166,13 +171,55 @@ export function NotesBrowser({
 
       {isEmpty ? (
         <EmptyState
-          icon="📝"
+          icon={<FileText className="h-10 w-10" />}
           title="还没有笔记"
-          description="点 📝＋ 新建笔记，或 📁＋ 先建个文件夹。"
+          description="点「新建笔记」新建，或「新建文件夹」先建个文件夹。"
         />
       ) : (
         <div className="space-y-1.5">
-          {/* 文件夹（平铺，点击进入它的笔记列表） */}
+          {/* 分段切换：文件夹优先（手机端避免「全部笔记」把文件夹挤到最下面） */}
+          <div className="mb-2 grid grid-cols-2 gap-1 rounded-xl bg-zinc-100 p-1">
+            <button
+              onClick={() => setTab("folders")}
+              className={`rounded-lg py-1.5 text-sm font-semibold transition-colors ${
+                tab === "folders"
+                  ? "bg-white text-zinc-900 shadow-sm"
+                  : "text-zinc-500 hover:text-zinc-700"
+              }`}
+            >
+              文件夹
+            </button>
+            <button
+              onClick={() => setTab("all")}
+              className={`rounded-lg py-1.5 text-sm font-semibold transition-colors ${
+                tab === "all"
+                  ? "bg-white text-zinc-900 shadow-sm"
+                  : "text-zinc-500 hover:text-zinc-700"
+              }`}
+            >
+              全部笔记
+            </button>
+          </div>
+
+          {tab === "all" ? (
+            allNotes.length === 0 ? (
+              <p className="px-3 py-3 text-sm text-zinc-400">
+                {q ? "没有匹配的笔记" : "还没有笔记"}
+              </p>
+            ) : (
+              <NoteList
+                notes={allNotes}
+                query={query.trim()}
+                folders={folders}
+                showFolder
+              />
+            )
+          ) : (
+            <>
+              {/* 文件夹（平铺，点击进入它的笔记列表） */}
+              {visibleFolders.length > 0 && (
+                <p className="px-1 pt-1 text-xs font-medium text-zinc-400">文件夹</p>
+              )}
           {visibleFolders.map((folder) => {
             const count = noteCountByFolder.get(folder.id) ?? 0;
             if (editingId === folder.id) {
@@ -181,7 +228,7 @@ export function NotesBrowser({
                   key={folder.id}
                   className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2"
                 >
-                  <span className="text-base">📁</span>
+                  <Folder className="h-4 w-4 shrink-0 text-zinc-400" />
                   <input
                     value={editingName}
                     onChange={(e) => setEditingName(e.target.value)}
@@ -216,7 +263,7 @@ export function NotesBrowser({
                   href={`/notes/folder/${folder.id}`}
                   className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5"
                 >
-                  <span className="text-base">📁</span>
+                  <Folder className="h-4 w-4 shrink-0 text-zinc-400" />
                   <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-800">
                     {folder.name}
                   </span>
@@ -265,10 +312,22 @@ export function NotesBrowser({
             );
           })}
 
-          {/* 没有文件夹的笔记：直接列出（和文件夹平铺在一起） */}
-          {unfiled.length > 0 && (
-            <NoteList notes={unfiled} query={query.trim()} folders={folders} />
+              {/* 无文件夹的笔记 */}
+              {unfiledNotes.length > 0 && (
+                <>
+                  <p className="px-1 pt-3 text-xs font-medium text-zinc-400">
+                    无文件夹
+                  </p>
+                  <NoteList
+                    notes={unfiledNotes}
+                    query={query.trim()}
+                    folders={folders}
+                  />
+                </>
+              )}
+            </>
           )}
+
         </div>
       )}
     </div>
@@ -283,7 +342,7 @@ export function NoteList({
 }: {
   notes: Note[];
   query: string;
-  folders: Folder[];
+  folders: FolderType[];
   showFolder?: boolean;
 }) {
   const router = useRouter();
@@ -362,8 +421,11 @@ export function NoteList({
                   <Highlight text={note.title} q={query} />
                 </p>
                 {showFolder && note.folder_id && (
-                  <p className="mt-0.5 truncate text-xs text-teal-500">
-                    📁 {folders.find((f) => f.id === note.folder_id)?.name ?? ""}
+                  <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-teal-500">
+                    <Folder className="h-3 w-3 shrink-0" />
+                    <span className="truncate">
+                      {folders.find((f) => f.id === note.folder_id)?.name ?? ""}
+                    </span>
                   </p>
                 )}
                 {note.content_text && (

@@ -14,7 +14,8 @@ import type {
   UserSettings,
   WordTheme,
 } from "@/lib/types";
-import { classifyWord } from "@/lib/word-themes";
+import { themeOf } from "@/lib/word-themes";
+import { detectLang } from "@/lib/lang-detect";
 
 /** 待复习的一张卡 + 它已有的复习状态（没复习过为 null）。 */
 export type ReviewItem = {
@@ -153,21 +154,43 @@ export async function listOrphanCards(): Promise<Card[]> {
   return (data ?? []) as Card[];
 }
 
-/** 卡片页的分组索引：把卡片按「文件夹 → 笔记」聚合，返回每个笔记下的卡片数。 */
+/** 从一组正面文字里挑出占比最高的语言（自动检测，测不出归「其他」）。 */
+function dominantLang(fronts: string[]): string {
+  const counts = new Map<string, number>();
+  for (const f of fronts) {
+    const l = detectLang(f);
+    counts.set(l, (counts.get(l) ?? 0) + 1);
+  }
+  let best = "other";
+  let bestCount = -1;
+  for (const [l, n] of counts) {
+    if (l === "other") continue;
+    if (n > bestCount) {
+      best = l;
+      bestCount = n;
+    }
+  }
+  return best;
+}
+
+/** 卡片页的分组索引：把卡片按「文件夹 → 笔记」聚合，返回每个笔记下的卡片数 + 主要语言。 */
 export async function listCardGroups(): Promise<CardFolderGroup[]> {
   const supabase = await createClient();
 
-  // 1. 挂在笔记下的卡片，数出每个 note_id 有几张
+  // 1. 挂在笔记下的卡片，数出每个 note_id 有几张，并记下正面文字用来判断主要语言
   const { data: cardRows, error: err1 } = await supabase
     .from("cards")
-    .select("note_id")
+    .select("note_id, front")
     .not("note_id", "is", null);
   if (err1) throw err1;
 
   const counts = new Map<string, number>();
+  const frontsByNote = new Map<string, string[]>();
   for (const r of cardRows ?? []) {
     const id = r.note_id as string;
     counts.set(id, (counts.get(id) ?? 0) + 1);
+    if (!frontsByNote.has(id)) frontsByNote.set(id, []);
+    frontsByNote.get(id)!.push(r.front as string);
   }
   const noteIds = Array.from(counts.keys());
   if (noteIds.length === 0) return [];
@@ -213,6 +236,7 @@ export async function listCardGroups(): Promise<CardFolderGroup[]> {
       title: n.title,
       count: counts.get(n.id) ?? 0,
       sourceType: n.source_type ?? null,
+      lang: dominantLang(frontsByNote.get(n.id) ?? []),
     });
   }
 
@@ -351,7 +375,7 @@ export async function getUserSettings(): Promise<UserSettings> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("user_settings")
-    .select("daily_goal, reminder_enabled, reminder_time, recognition_rules")
+    .select("daily_goal, reminder_enabled, reminder_time, recognition_rules, hidden_themes")
     .limit(1)
     .maybeSingle();
   if (error) throw error;
@@ -360,6 +384,7 @@ export async function getUserSettings(): Promise<UserSettings> {
     reminder_enabled: data?.reminder_enabled ?? false,
     reminder_time: data?.reminder_time ?? null,
     recognition_rules: (data?.recognition_rules ?? null) as UserSettings["recognition_rules"],
+    hidden_themes: (data?.hidden_themes ?? []) as string[],
   };
 }
 
@@ -397,6 +422,27 @@ export async function listAllCards(): Promise<Card[]> {
     .order("created_at", { ascending: true });
   if (error) throw error;
   return (data ?? []) as Card[];
+}
+
+/** 所有「到期」的卡（没背过的 + due_at 已到），跨全部笔记/独立卡。故事模式挑生词用。 */
+export async function listDueCardsAll(): Promise<ReviewItem[]> {
+  const supabase = await createClient();
+  const [cardsRes, statesRes] = await Promise.all([
+    supabase.from("cards").select("*"),
+    supabase.from("review_state").select("*"),
+  ]);
+  if (cardsRes.error) throw cardsRes.error;
+  if (statesRes.error) throw statesRes.error;
+  const stateMap = new Map<string, ReviewState>();
+  for (const s of statesRes.data ?? []) stateMap.set(s.card_id, s as ReviewState);
+  const now = Date.now();
+  return ((cardsRes.data ?? []) as Card[])
+    .filter((c) => {
+      const s = stateMap.get(c.id);
+      if (!s) return true;
+      return new Date(s.due_at).getTime() <= now;
+    })
+    .map((c) => ({ card: c, state: stateMap.get(c.id) ?? null }));
 }
 
 /** 某个合集（笔记 + 类别，或独立卡片）里的全部卡片。noteId 为 null 表示独立卡片。 */
@@ -443,6 +489,35 @@ export async function listWeakCards(): Promise<ReviewItem[]> {
     .map((c) => ({ card: c, state: stateMap.get(c.id) ?? null }));
 }
 
+/** 测试错题集的卡（最近选错的排前），附上复习状态供「开始背」用。 */
+export async function listTestErrors(): Promise<ReviewItem[]> {
+  const supabase = await createClient();
+  const { data: errs, error: e1 } = await supabase
+    .from("test_errors")
+    .select("card_id")
+    .order("updated_at", { ascending: false });
+  if (e1) throw e1;
+  const cardIds = (errs ?? []).map((e) => e.card_id as string);
+  if (cardIds.length === 0) return [];
+  const { data: cards, error: e2 } = await supabase
+    .from("cards")
+    .select("*")
+    .in("id", cardIds);
+  if (e2) throw e2;
+  const cardMap = new Map<string, Card>();
+  for (const c of cards ?? []) cardMap.set(c.id, c as Card);
+  const ordered = cardIds
+    .map((id) => cardMap.get(id))
+    .filter((c): c is Card => Boolean(c));
+  const { data: states } = await supabase
+    .from("review_state")
+    .select("*")
+    .in("card_id", ordered.map((c) => c.id));
+  const stateMap = new Map<string, ReviewState>();
+  for (const s of states ?? []) stateMap.set(s.card_id, s as ReviewState);
+  return ordered.map((c) => ({ card: c, state: stateMap.get(c.id) ?? null }));
+}
+
 /** 复习总览：统计 + 合集 + 待加强。 */
 export async function getReviewOverview(): Promise<ReviewOverview> {
   const supabase = await createClient();
@@ -480,10 +555,7 @@ export async function getReviewOverview(): Promise<ReviewOverview> {
   let todayReviewed = 0;
   for (const c of cards) {
     const s = stateMap.get(c.id);
-    if (!s) {
-      due++;
-      continue;
-    }
+    if (!s) continue; // 没背过的卡不算「待复习」，也不计入已复习/已掌握/待加强
     reviewed++;
     if (new Date(s.due_at).getTime() <= now) due++;
     if (s.interval_days >= 21 || (s.reps >= 3 && (s.last_rating ?? 0) >= 3)) mastered++;
@@ -620,7 +692,7 @@ export async function listThemeCards(themeKey: string): Promise<Card[]> {
   if (cardsRes.error) throw cardsRes.error;
   const userThemes = (themesRes.data ?? []) as WordTheme[];
   return ((cardsRes.data ?? []) as Card[]).filter(
-    (c) => classifyWord(c.front, c.back ?? "", userThemes) === themeKey
+    (c) => themeOf(c, userThemes) === themeKey
   );
 }
 
@@ -640,7 +712,7 @@ export async function listThemeReviewItems(themeKey: string): Promise<ReviewItem
   const userThemes = (themesRes.data ?? []) as WordTheme[];
 
   const matched = ((cardsRes.data ?? []) as Card[]).filter(
-    (c) => classifyWord(c.front, c.back ?? "", userThemes) === themeKey
+    (c) => themeOf(c, userThemes) === themeKey
   );
   if (matched.length === 0) return [];
 

@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import type { Node as PMNode } from "@tiptap/pm/model";
 import Placeholder from "@tiptap/extension-placeholder";
 import {
   Bold,
@@ -17,13 +20,60 @@ import {
   Sprout,
   MessageSquare,
   Puzzle,
+  ScrollText,
   Undo2,
   Redo2,
+  AudioLines,
+  Rss,
+  Sparkles,
+  X,
 } from "lucide-react";
 import { editorExtensions } from "@/lib/editor-extensions";
 import { docToText } from "@/lib/doc-to-text";
-import { parseMediaUrl } from "@/lib/media";
+import { parseMediaUrl, isRssUrl } from "@/lib/media";
+import { Extension } from "@tiptap/core";
 import type { JSONContent } from "@tiptap/core";
+import { createPortal } from "react-dom";
+import { createClient } from "@/lib/supabase/client";
+
+/** AI 解释结果：词典原形（卡片正面）+ 音标/注音 + 词性 + 释义 + 词组 + 例句。 */
+type ExplainResult = {
+  baseForm: string;
+  phonetic: string;
+  partOfSpeech: string;
+  meaning: string;
+  collocations: string;
+  example: string;
+};
+
+/** 装饰插件 key：注册 / 注销都用它定位。 */
+const collectedWordKey = new PluginKey("collectedWordDecorations");
+
+/** 精读「已解释且收录」标记：本次阅读里点过「解释」并「收录到闪卡」的词，
+ *  在原文对应文本上加一条淡下划线。纯装饰（Decoration），不改动笔记 JSON。 */
+function collectedWordDecorations(doc: PMNode, words: Set<string>): DecorationSet {
+  const terms = Array.from(words)
+    .filter((w) => w.length > 0)
+    .sort((a, b) => b.length - a.length); // 长词优先，避免被短词抢先截断
+  if (terms.length === 0) return DecorationSet.empty;
+  const decos: Decoration[] = [];
+  doc.descendants((node, pos) => {
+    if (!node.isText) return;
+    const text = node.text ?? "";
+    for (const term of terms) {
+      let idx = text.indexOf(term);
+      while (idx !== -1) {
+        decos.push(
+          Decoration.inline(pos + idx, pos + idx + term.length, {
+            class: "collected-word",
+          })
+        );
+        idx = text.indexOf(term, idx + term.length);
+      }
+    }
+  });
+  return DecorationSet.create(doc, decos);
+}
 
 function ToolButton({
   onClick,
@@ -61,13 +111,45 @@ function ToolButton({
 export function RichTextEditor({
   initialContent,
   onChange,
+  noteId,
 }: {
   initialContent?: unknown;
   onChange?: (json: JSONContent | null, text: string) => void;
+  noteId: string;
 }) {
+  // 本次会话「点过解释并收录」的原文文本集合（精确匹配文档里的字串），纯装饰标记用。
+  const collectedTextsRef = useRef<Set<string>>(new Set());
+
+  // 装饰插件：每次视图更新时按 collectedTextsRef 给命中的字串套 .collected-word。
+  // 用 Extension + addProseMirrorPlugins 在编辑器创建时一次性挂上（不写进笔记内容），
+  // 不用 useEffect + registerPlugin —— 那在 React 严格模式（开发）下会把同一个 key
+  // 的插件实例重复注册，报「Adding different instances of a keyed plugin」。
+  const CollectedWords = useMemo(
+    () =>
+      Extension.create({
+        name: "collectedWords",
+        addProseMirrorPlugins() {
+          return [
+            new Plugin({
+              key: collectedWordKey,
+              props: {
+                decorations(state) {
+                  const words = collectedTextsRef.current;
+                  if (words.size === 0) return DecorationSet.empty;
+                  return collectedWordDecorations(state.doc, words);
+                },
+              },
+            }),
+          ];
+        },
+      }),
+    []
+  );
+
   const editor = useEditor({
     extensions: [
       ...editorExtensions,
+      CollectedWords,
       Placeholder.configure({
         placeholder: "写点什么，或粘贴泰语生词 / 表格…",
       }),
@@ -87,6 +169,24 @@ export function RichTextEditor({
   const [blockType, setBlockType] = useState("paragraph");
   const [mediaOpen, setMediaOpen] = useState(false);
   const [mediaUrl, setMediaUrl] = useState("");
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [rssLoading, setRssLoading] = useState(false);
+  const [rssError, setRssError] = useState<string | null>(null);
+  const [rssFeed, setRssFeed] = useState<{
+    title: string;
+    episodes: { title: string; audio: string }[];
+  } | null>(null);
+  const [explain, setExplain] = useState<{
+    text: string;
+    left: number;
+    top: number;
+    bottom: number;
+  } | null>(null);
+  const [result, setResult] = useState<ExplainResult | null>(null);
+  const [explainBusy, setExplainBusy] = useState(false);
+  const [explainError, setExplainError] = useState<string | null>(null);
+  const [collected, setCollected] = useState(false);
+  const [collecting, setCollecting] = useState(false);
 
   // 标题下拉要实时反映光标所在的块：显式监听 selection/transaction，
   // 否则光标的块变了（点标题、移动光标）下拉不一定重渲染，会「停在同一个」上。
@@ -114,8 +214,121 @@ export function RichTextEditor({
     };
   }, [editor]);
 
+  // 「高亮即解释」：有文字选中时，在选区上方浮出「✨ 解释」气泡；
+  // 选区消失或变化就清掉气泡和上一次的解释结果。
+  useEffect(() => {
+    if (!editor) return;
+    const update = () => {
+      const { from, to } = editor.state.selection;
+      if (from === to) {
+        setExplain(null);
+        setResult(null);
+        setExplainError(null);
+        setCollected(false);
+        return;
+      }
+      const text = editor.state.doc.textBetween(from, to, " ", " ");
+      const trimmed = text.trim();
+      if (!trimmed || trimmed.length > 120) {
+        setExplain(null);
+        setResult(null);
+        setExplainError(null);
+        setCollected(false);
+        return;
+      }
+      const coords = editor.view.coordsAtPos(from);
+      setExplain({
+        text: trimmed,
+        left: coords.left,
+        top: coords.top,
+        bottom: coords.bottom,
+      });
+      setResult(null);
+      setExplainError(null);
+      setCollected(false);
+    };
+    editor.on("selectionUpdate", update);
+    return () => {
+      editor.off("selectionUpdate", update);
+    };
+  }, [editor]);
+
   if (!editor) {
     return <div className="flex-1 bg-white" />;
+  }
+
+  /** 调 AI 解释选中的词/短语，结果放进 result（释义+词组+例句）。 */
+  async function runExplain() {
+    if (!explain || explainBusy) return;
+    setExplainBusy(true);
+    setExplainError(null);
+    setResult(null);
+    try {
+      const res = await fetch("/api/ai/explain", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: explain.text }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setExplainError(data?.error ?? "解释失败");
+        return;
+      }
+      setResult(data as ExplainResult);
+    } catch (e) {
+      setExplainError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExplainBusy(false);
+    }
+  }
+
+  /** 把解释结果收录成一张生词卡（正面=词典原形，背面=释义+词组+例句）。 */
+  async function collect() {
+    if (!result || collected || collecting) return;
+    setCollecting(true);
+    setExplainError(null);
+    const supabase = createClient();
+    // 同一篇笔记里正面已存在就不重复收录。
+    const { data: existing } = await supabase
+      .from("cards")
+      .select("id")
+      .eq("note_id", noteId)
+      .eq("front", result.baseForm)
+      .limit(1);
+    if (existing && existing.length > 0) {
+      setCollecting(false);
+      setCollected(true);
+      setExplainError("这个词已经在闪卡里了。");
+      return;
+    }
+    const meta = [result.partOfSpeech, result.phonetic ? `/${result.phonetic}/` : ""]
+      .filter(Boolean)
+      .join(" · ");
+    const back = [
+      meta,
+      result.meaning,
+      result.collocations ? `【词组】${result.collocations}` : "",
+      result.example ? `【例句】${result.example}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    const { error } = await supabase.from("cards").insert({
+      note_id: noteId,
+      front: result.baseForm,
+      back,
+      kind: "word",
+      position: 0,
+    });
+    setCollecting(false);
+    if (error) {
+      setExplainError(error.message);
+      return;
+    }
+    setCollected(true);
+    // 把选中的原文标成「已解释且收录」，下划线装饰立即生效。
+    if (explain?.text) collectedTextsRef.current.add(explain.text);
+    editor.view.dispatch(editor.state.tr);
   }
 
   function applyBlockType(type: string) {
@@ -138,8 +351,8 @@ export function RichTextEditor({
       .run();
   }
 
-  /** 生词 / 例句 / 语法：插一个带彩色标签的 callout 块，内容「转成闪卡」时按标签自动归类。 */
-  function insertKindCallout(kind: "word" | "example" | "grammar") {
+  /** 生词 / 例句 / 语法 / 原文：插一个带彩色标签的 callout 块，内容「转成闪卡」时按标签自动归类（原文跳过）。 */
+  function insertKindCallout(kind: "word" | "example" | "grammar" | "article") {
     editor
       .chain()
       .focus()
@@ -177,25 +390,69 @@ export function RichTextEditor({
     e.target.value = "";
   }
 
-  /** 媒体：粘贴 YouTube / 音频链接，识别后插入内嵌节点。 */
+  /** 媒体：粘贴 YouTube / 音频 / 播客 RSS 链接，识别后插入内嵌节点。 */
   function insertMedia() {
     const url = mediaUrl.trim();
     if (!url) return;
     const parsed = parseMediaUrl(url);
-    if (!parsed) {
+    if (parsed) {
+      editor
+        .chain()
+        .focus()
+        .insertContent({
+          type: "mediaEmbed",
+          attrs: { src: parsed.embedUrl, kind: parsed.kind, title: parsed.title },
+        })
+        .run();
       setMediaUrl("");
       setMediaOpen(false);
       return;
     }
+    if (isRssUrl(url)) {
+      void fetchRss(url);
+      return;
+    }
+    setMediaError("无法识别的链接。支持 YouTube、音频直链（mp3/m4a/…）和播客 RSS 订阅。");
+  }
+
+  /** 抓取 RSS 订阅，列出每一集供用户挑选。 */
+  async function fetchRss(url: string) {
+    setRssLoading(true);
+    setRssError(null);
+    setMediaError(null);
+    try {
+      const res = await fetch("/api/rss", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setRssError(data?.error ?? "抓取订阅失败");
+        return;
+      }
+      setRssFeed(data);
+    } catch (e) {
+      setRssError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRssLoading(false);
+    }
+  }
+
+  /** 选中某一集，作为音频节点插入编辑器。 */
+  function insertEpisode(audio: string, title: string) {
     editor
       .chain()
       .focus()
       .insertContent({
         type: "mediaEmbed",
-        attrs: { src: parsed.embedUrl, kind: parsed.kind, title: parsed.title },
+        attrs: { src: audio, kind: "audio", title },
       })
       .run();
     setMediaUrl("");
+    setRssFeed(null);
+    setRssError(null);
+    setMediaError(null);
     setMediaOpen(false);
   }
 
@@ -264,33 +521,42 @@ export function RichTextEditor({
           onChange={pickImage}
         />
 
-        {/* 生词 / 例句 / 语法：3 个独立按钮，放在图片/媒体后面，各自淡色系 */}
+        {/* 生词 / 例句 / 语法：3 个纯图标按钮（文字只显示在 callout 卡片上），放在图片/媒体后面，各自淡色系 */}
         <button
           type="button"
           onClick={() => insertKindCallout("word")}
           title="插入生词区块"
-          className="ml-1 inline-flex items-center gap-1 rounded-lg bg-sky-50 px-2 py-1.5 text-sm text-sky-600 transition-colors hover:bg-sky-100"
+          aria-label="插入生词区块"
+          className="ml-1 rounded-lg bg-sky-50 p-2 text-sky-600 transition-colors hover:bg-sky-100"
         >
           <Sprout className="h-4 w-4" />
-          生词
         </button>
         <button
           type="button"
           onClick={() => insertKindCallout("example")}
           title="插入例句区块"
-          className="inline-flex items-center gap-1 rounded-lg bg-green-50 px-2 py-1.5 text-sm text-green-600 transition-colors hover:bg-green-100"
+          aria-label="插入例句区块"
+          className="rounded-lg bg-green-50 p-2 text-green-600 transition-colors hover:bg-green-100"
         >
           <MessageSquare className="h-4 w-4" />
-          例句
         </button>
         <button
           type="button"
           onClick={() => insertKindCallout("grammar")}
           title="插入语法区块"
-          className="inline-flex items-center gap-1 rounded-lg bg-purple-50 px-2 py-1.5 text-sm text-purple-600 transition-colors hover:bg-purple-100"
+          aria-label="插入语法区块"
+          className="rounded-lg bg-purple-50 p-2 text-purple-600 transition-colors hover:bg-purple-100"
         >
           <Puzzle className="h-4 w-4" />
-          语法
+        </button>
+        <button
+          type="button"
+          onClick={() => insertKindCallout("article")}
+          title="插入原文区块（只读，转成闪卡时跳过）"
+          aria-label="插入原文区块"
+          className="rounded-lg bg-zinc-100 p-2 text-zinc-500 transition-colors hover:bg-zinc-200"
+        >
+          <ScrollText className="h-4 w-4" />
         </button>
 
         <span className="mx-1 h-5 w-px bg-zinc-200" />
@@ -306,35 +572,78 @@ export function RichTextEditor({
         {mediaOpen && (
           <>
             <div className="fixed inset-0 z-10" onClick={() => setMediaOpen(false)} />
-            <div className="absolute right-0 top-full z-20 mt-1 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-lg md:right-6">
-              <p className="mb-2 text-xs font-medium text-zinc-500">
-                粘贴 YouTube 视频或音频（mp3/m4a/…）链接
-              </p>
-              <input
-                value={mediaUrl}
-                onChange={(e) => setMediaUrl(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") insertMedia();
-                }}
-                placeholder="https://…"
-                autoFocus
-                className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-800 focus:border-teal-500 focus:outline-none"
-              />
-              <div className="mt-2 flex justify-end gap-2">
-                <button
-                  onClick={() => setMediaOpen(false)}
-                  className="rounded-lg px-3 py-1.5 text-sm text-zinc-500 hover:bg-zinc-50"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={insertMedia}
-                  disabled={!mediaUrl.trim()}
-                  className="rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
-                >
-                  嵌入
-                </button>
-              </div>
+            <div className="absolute right-0 top-full z-20 mt-1 w-80 rounded-xl border border-zinc-200 bg-white p-3 shadow-lg md:right-6">
+              {rssFeed ? (
+                /* RSS 节目列表：挑一集插入 */
+                <div>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-zinc-500">
+                      <Rss className="h-3.5 w-3.5 shrink-0 text-teal-500" />
+                      <span className="truncate">选择一集 · {rssFeed.title}</span>
+                    </p>
+                    <button
+                      onClick={() => {
+                        setRssFeed(null);
+                        setRssError(null);
+                      }}
+                      className="shrink-0 text-xs text-teal-600 hover:text-teal-700"
+                    >
+                      ← 换链接
+                    </button>
+                  </div>
+                  <ul className="max-h-64 space-y-0.5 overflow-y-auto">
+                    {rssFeed.episodes.map((ep, i) => (
+                      <li key={i}>
+                        <button
+                          onClick={() => insertEpisode(ep.audio, ep.title)}
+                          className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-zinc-700 transition-colors hover:bg-teal-50"
+                        >
+                          <AudioLines className="h-3.5 w-3.5 shrink-0 text-teal-500" />
+                          <span className="min-w-0 flex-1 truncate">{ep.title}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                /* 输入链接 */
+                <div>
+                  <p className="mb-2 text-xs font-medium text-zinc-500">
+                    粘贴 YouTube 视频、音频（mp3/m4a/…）或播客 RSS 订阅链接
+                  </p>
+                  <input
+                    value={mediaUrl}
+                    onChange={(e) => {
+                      setMediaUrl(e.target.value);
+                      setMediaError(null);
+                      setRssError(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") insertMedia();
+                    }}
+                    placeholder="https://…"
+                    autoFocus
+                    className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-800 focus:border-teal-500 focus:outline-none"
+                  />
+                  {mediaError && <p className="mt-1.5 text-xs text-red-600">{mediaError}</p>}
+                  {rssError && <p className="mt-1.5 text-xs text-red-600">{rssError}</p>}
+                  <div className="mt-2 flex justify-end gap-2">
+                    <button
+                      onClick={() => setMediaOpen(false)}
+                      className="rounded-lg px-3 py-1.5 text-sm text-zinc-500 hover:bg-zinc-50"
+                    >
+                      取消
+                    </button>
+                    <button
+                      onClick={insertMedia}
+                      disabled={!mediaUrl.trim() || rssLoading}
+                      className="rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
+                    >
+                      {rssLoading ? "解析中…" : "嵌入"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -377,6 +686,116 @@ export function RichTextEditor({
           </ToolButton>
         </div>
       )}
+
+      {/* 高亮即解释：选区上方浮出「✨ 解释」气泡；点后换成 释义+词组+例句 + 收录 */}
+      {explain &&
+        createPortal(
+          result ? (
+            <div
+              style={{
+                left: Math.min(Math.max(explain.left, 8), window.innerWidth - 376),
+                top: Math.max(8, Math.min(explain.bottom + 8, window.innerHeight - 360)),
+              }}
+              className="fixed z-50 w-[360px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-2xl"
+            >
+              <div className="flex items-start justify-between gap-2 border-b border-zinc-100 px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm font-bold text-zinc-900">
+                      {result.baseForm}
+                    </span>
+                    {result.partOfSpeech && (
+                      <span className="shrink-0 rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-600">
+                        {result.partOfSpeech}
+                      </span>
+                    )}
+                  </div>
+                  {result.phonetic && (
+                    <p className="mt-0.5 text-xs text-zinc-400">/{result.phonetic}/</p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResult(null);
+                    setExplain(null);
+                  }}
+                  className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                  aria-label="关闭"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="max-h-[60vh] space-y-2 overflow-y-auto px-3 py-3 text-sm">
+                <p className="text-zinc-700">
+                  <span className="mr-1 text-xs font-medium text-zinc-400">释义</span>
+                  {result.meaning}
+                </p>
+                {result.collocations && (
+                  <p className="whitespace-pre-line text-zinc-600">
+                    <span className="mr-1 text-xs font-medium text-zinc-400">词组</span>
+                    {result.collocations}
+                  </p>
+                )}
+                {result.example && (
+                  <p className="whitespace-pre-line text-zinc-600">
+                    <span className="mr-1 text-xs font-medium text-zinc-400">例句</span>
+                    {result.example}
+                  </p>
+                )}
+                {explainError && <p className="text-xs text-red-600">{explainError}</p>}
+              </div>
+              <div className="border-t border-zinc-100 px-3 py-2">
+                <button
+                  type="button"
+                  onClick={collect}
+                  disabled={collecting || collected}
+                  className="w-full rounded-lg bg-teal-600 py-2 text-sm font-semibold text-white transition-colors hover:bg-teal-700 disabled:opacity-60"
+                >
+                  {collecting ? "收录中…" : collected ? "已收录 ✓" : "收录到闪卡"}
+                </button>
+              </div>
+            </div>
+          ) : explainError ? (
+            <div
+              style={{
+                left: Math.min(Math.max(explain.left, 8), window.innerWidth - 320),
+                top: Math.max(8, Math.min(explain.bottom + 8, window.innerHeight - 120)),
+              }}
+              className="fixed z-50 flex items-center gap-2 rounded-xl border border-red-200 bg-white px-3 py-2 shadow-2xl"
+            >
+              <p className="text-xs text-red-600">{explainError}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setExplainError(null);
+                  setExplain(null);
+                }}
+                className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                aria-label="关闭"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={runExplain}
+              disabled={explainBusy}
+              style={{
+                left: Math.min(Math.max(explain.left, 8), window.innerWidth - 160),
+                top: explain.top - 8,
+                transform: "translateY(-100%)",
+              }}
+              className="fixed z-50 inline-flex items-center gap-1 rounded-full bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white shadow-lg transition-colors hover:bg-zinc-700 disabled:opacity-60"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              {explainBusy ? "解释中…" : "解释"}
+            </button>
+          ),
+          document.body
+        )}
 
       <EditorContent editor={editor} className="flex-1" />
     </div>

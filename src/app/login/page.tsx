@@ -77,7 +77,7 @@ export default function LoginPage() {
           <BrandMark className="mx-auto mb-3 h-14 w-14" />
           <h1 className="text-2xl font-bold text-zinc-900">语巢</h1>
           <p className="text-sm font-medium tracking-wide text-zinc-400">Nestlingo</p>
-          <p className="text-sm text-zinc-500 mt-1">记录即背诵 · 语言学习工作台</p>
+          <p className="text-sm text-zinc-500 mt-1">积词成巢 · 你的语言学习工作台</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">

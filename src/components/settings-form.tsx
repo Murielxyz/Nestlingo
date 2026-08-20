@@ -59,13 +59,6 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
     router.refresh();
   }
 
-  async function logout() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.replace("/login");
-    router.refresh();
-  }
-
   return (
     <div className="space-y-6">
       {/* 每日目标 */}
@@ -130,15 +123,30 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
       >
         {busy ? "保存中…" : saved ? "已保存 ✓" : "保存设置"}
       </button>
-
-      <div className="border-t border-zinc-200 pt-4">
-        <button
-          onClick={logout}
-          className="w-full rounded-xl border border-zinc-200 px-4 py-2.5 text-sm text-zinc-600 transition-colors hover:bg-zinc-50 hover:text-zinc-900"
-        >
-          退出登录
-        </button>
-      </div>
     </div>
+  );
+}
+
+/** 退出登录按钮（单独放在设置页最底部）。 */
+export function LogoutButton() {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+
+  async function logout() {
+    setBusy(true);
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.replace("/login");
+    router.refresh();
+  }
+
+  return (
+    <button
+      onClick={logout}
+      disabled={busy}
+      className="w-full rounded-xl border border-zinc-200 px-4 py-2.5 text-sm text-zinc-600 transition-colors hover:bg-zinc-50 hover:text-zinc-900 disabled:opacity-60"
+    >
+      {busy ? "退出中…" : "退出登录"}
+    </button>
   );
 }

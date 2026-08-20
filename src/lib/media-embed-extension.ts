@@ -9,7 +9,7 @@ import { MediaEmbedNodeView } from "@/components/media-embed-nodeview";
 
 export type MediaEmbedAttrs = {
   src: string;
-  kind: "youtube" | "audio";
+  kind: "youtube" | "audio" | "spotify";
   title: string;
 };
 
@@ -70,6 +70,9 @@ export const MediaEmbed = Node.create({
           : ["p", {}, `▶ ${title || "视频"}`],
       ];
     }
-    return ["div", base, ["p", {}, `🎧 ${title || "音频"}`]];
+    if (kind === "spotify") {
+      return ["div", base, ["p", {}, `♪ ${title || "音乐"}`]];
+    }
+    return ["div", base, ["p", {}, title || "音频"]];
   },
 });

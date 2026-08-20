@@ -27,6 +27,29 @@ export function speechLang(lang: Lang): string {
   }
 }
 
+/**
+ * 发音前清洗：只保留目标语言的文字，去掉夹杂的拉丁字母（罗马读音 / 拼音 / 假名罗马字），
+ * 避免「สวัสดี sawadee」被读两遍（泰语 + 罗马拼音）。
+ * 纯拉丁文字（本身就是要读的语言）原样返回。
+ */
+export function cleanForSpeech(text: string): string {
+  const lang = detectLang(text);
+  if (lang === "other") return text;
+  const keep =
+    lang === "thai"
+      ? /[฀-๿]/
+      : lang === "korean"
+        ? /[가-힯]/
+        : lang === "chinese"
+          ? /[一-鿿]/
+          : /[぀-ヿ一-鿿]/; // 日语：假名 + 汉字
+  return [...text]
+    .filter((ch) => keep.test(ch) || /\s/.test(ch))
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export const LANG_LABEL: Record<Lang, string> = {
   thai: "泰语",
   korean: "韩语",

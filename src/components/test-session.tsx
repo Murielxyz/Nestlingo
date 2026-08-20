@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { FileText, PartyPopper, Smile, Activity } from "lucide-react";
 import type { Card } from "@/lib/types";
+import { createClient } from "@/lib/supabase/client";
 import { SpeakButton } from "./speak-button";
 
 type Question = {
@@ -66,9 +68,25 @@ export function TestSession({
 
   const q = questions[idx];
 
-  function record(ok: boolean) {
+  async function record(ok: boolean) {
     if (ok) setCorrectCount((n) => n + 1);
-    else setWrongList((l) => [...l, q]);
+    else {
+      setWrongList((l) => [...l, q]);
+      // 落库到错题集（独立于 SM-2 复习评分；表没建/出错不影响测试本身）。
+      try {
+        const supabase = createClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (user) {
+          await supabase
+            .from("test_errors")
+            .upsert({ user_id: user.id, card_id: q.card.id }, { onConflict: "user_id,card_id" });
+        }
+      } catch {
+        // 忽略
+      }
+    }
   }
 
   function answerChoice(opt: string) {
@@ -103,7 +121,7 @@ export function TestSession({
   if (questions.length === 0) {
     return (
       <div className="mx-auto max-w-xl rounded-2xl border border-zinc-200 bg-white px-6 py-16 text-center">
-        <p className="text-4xl">📝</p>
+        <FileText className="h-10 w-10 text-zinc-300" />
         <p className="mt-4 text-lg font-semibold text-zinc-900">没有可测试的卡片</p>
         <p className="mt-1 text-sm text-zinc-500">
           需要卡片同时有正面和背面（答案）才能出题。
@@ -125,7 +143,15 @@ export function TestSession({
     return (
       <div className="mx-auto max-w-xl">
         <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-8 text-center">
-          <p className="text-4xl">{pct >= 80 ? "🎉" : pct >= 50 ? "🙂" : "💪"}</p>
+          <div className="flex justify-center">
+            {pct >= 80 ? (
+              <PartyPopper className="h-10 w-10 text-teal-500" />
+            ) : pct >= 50 ? (
+              <Smile className="h-10 w-10 text-teal-500" />
+            ) : (
+              <Activity className="h-10 w-10 text-teal-500" />
+            )}
+          </div>
           <p className="mt-3 text-lg font-semibold text-zinc-900">
             答对 {correctCount} / {total} 题（{pct}%）
           </p>
@@ -153,8 +179,7 @@ export function TestSession({
             <ul className="space-y-2">
               {wrongList.map((wq, i) => (
                 <li key={i} className="rounded-xl border border-zinc-200 bg-white p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-zinc-400">选择题</span>
+                  <div className="flex items-center justify-end gap-2">
                     <SpeakButton text={wq.card.front} />
                   </div>
                   <p className="mt-1 text-sm font-medium text-zinc-900">{wq.card.front}</p>
@@ -174,14 +199,9 @@ export function TestSession({
   return (
     <div className="mx-auto max-w-xl">
       {/* 进度 */}
-      <div className="mb-4 flex items-center justify-between text-sm text-zinc-500">
-        <span>
-          第 <span className="font-semibold text-zinc-800">{idx + 1}</span> /{" "}
-          {questions.length} 题
-        </span>
-        <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs text-zinc-600">
-          选择题
-        </span>
+      <div className="mb-4 text-sm text-zinc-500">
+        第 <span className="font-semibold text-zinc-800">{idx + 1}</span> /{" "}
+        {questions.length} 题
       </div>
       <div className="mb-5 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
         <div

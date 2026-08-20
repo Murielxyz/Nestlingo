@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { Folder } from "lucide-react";
 import { NoteList } from "./notes-browser";
-import type { Folder, Note } from "@/lib/types";
+import type { Folder as FolderType, Note } from "@/lib/types";
 
 /**
  * 手机端文件夹详情页：显示一个文件夹里的笔记列表。
@@ -13,9 +14,9 @@ export function MobileFolderView({
   notes,
   folders,
 }: {
-  folder: Folder;
+  folder: FolderType;
   notes: Note[];
-  folders: Folder[];
+  folders: FolderType[];
 }) {
   return (
     <div className="px-4 py-6">
@@ -27,8 +28,8 @@ export function MobileFolderView({
       </Link>
 
       <header className="mb-4 mt-4">
-        <h1 className="text-2xl font-bold text-zinc-900">
-          <span className="mr-2">📁</span>
+        <h1 className="flex items-center gap-2 text-2xl font-bold text-zinc-900">
+          <Folder className="h-6 w-6 text-zinc-400" />
           {folder.name}
         </h1>
         <p className="mt-1 text-sm text-zinc-400">{notes.length} 篇笔记</p>

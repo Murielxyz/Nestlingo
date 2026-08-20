@@ -3,6 +3,7 @@
 
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { aiChat, AiError } from "@/lib/ai-client";
 
 export const runtime = "nodejs";
 
@@ -37,14 +38,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "未登录" }, { status: 401 });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "未配置 ANTHROPIC_API_KEY（在 .env.local 里填 Anthropic 的 API Key）" },
-      { status: 400 }
-    );
-  }
-
   let body: { name?: string };
   try {
     body = await req.json();
@@ -57,41 +50,15 @@ export async function POST(req: Request) {
   }
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: process.env.ANTHROPIC_MODEL ?? "claude-opus-5",
-        max_tokens: 1000,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: `分类名：${name}` }],
-      }),
+    const raw = await aiChat({
+      system: SYSTEM_PROMPT,
+      user: `分类名：${name}`,
+      maxTokens: 1000,
     });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      return NextResponse.json(
-        { error: `AI 调用失败（${res.status}）：${errText.slice(0, 300)}` },
-        { status: 502 }
-      );
-    }
-
-    const data = await res.json();
-    const raw =
-      (data.content ?? [])
-        .filter((c: { type?: string }) => c.type === "text")
-        .map((c: { text?: string }) => c.text ?? "")
-        .join("") ?? "";
-
     return NextResponse.json({ keywords: parseKeywords(raw) });
   } catch (err) {
-    return NextResponse.json(
-      { error: `AI 调用异常：${err instanceof Error ? err.message : String(err)}` },
-      { status: 500 }
-    );
+    const status = err instanceof AiError ? err.status : 500;
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: message }, { status });
   }
 }

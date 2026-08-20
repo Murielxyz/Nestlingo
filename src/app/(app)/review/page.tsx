@@ -7,17 +7,22 @@ import {
   listCollectionCards,
   listAllCards,
   listWeakCards,
+  listTestErrors,
   listThemeCards,
   listThemeReviewItems,
   listWordThemes,
   friendlyQueryError,
 } from "@/lib/supabase/queries";
 import { themeLabelOf } from "@/lib/word-themes";
+import { detectLang, LANG_LABEL, LANG_COLOR, type Lang } from "@/lib/lang-detect";
 import type { WordTheme } from "@/lib/types";
 import { ReviewSession } from "@/components/review-session";
 import { TestSession } from "@/components/test-session";
 import { ReviewHome } from "@/components/review-home";
+import { StoryMode } from "@/components/story-mode";
+import { TestErrors } from "@/components/test-errors";
 import { EmptyState } from "@/components/empty-state";
+import { Activity, PartyPopper, RefreshCw, BookOpen } from "lucide-react";
 
 const KIND_LABEL: Record<string, string> = {
   word: "生词",
@@ -31,6 +36,15 @@ function parseKind(k?: string): string | null {
 
 function kindSuffixOf(k?: string | null): string {
   return k && KIND_LABEL[k] ? ` · ${KIND_LABEL[k]}` : "";
+}
+
+const LANG_ORDER: Lang[] = ["thai", "korean", "chinese", "japanese", "other"];
+
+/** 综合测试里实际出现的语言（按正面文字自动检测，去重、固定顺序）。 */
+function presentLangsOf(cards: { front: string }[]): Lang[] {
+  const s = new Set<Lang>();
+  for (const c of cards) s.add(detectLang(c.front));
+  return LANG_ORDER.filter((l) => s.has(l));
 }
 
 /** 拉取用户自定义词群分类（新表可能还没建，出错就返回空，不影响内置主题）。 */
@@ -59,9 +73,10 @@ export default async function ReviewPage({
     mode?: string;
     scope?: string;
     theme?: string;
+    lang?: string;
   }>;
 }) {
-  const { note, kind, mode, scope, theme } = await searchParams;
+  const { note, kind, mode, scope, theme, lang } = await searchParams;
 
   // ===== 待加强的卡（背） =====
   if (scope === "weak") {
@@ -91,7 +106,7 @@ export default async function ReviewPage({
           </div>
         ) : items.length === 0 ? (
           <EmptyState
-            icon="💪"
+            icon={<Activity className="h-10 w-10" />}
             title="没有待加强的卡"
             description="最近没有答错的卡片，继续保持。"
           />
@@ -102,12 +117,54 @@ export default async function ReviewPage({
     );
   }
 
+  // ===== 错题集 =====
+  if (scope === "errors") {
+    let items: Awaited<ReturnType<typeof listTestErrors>> = [];
+    let error: string | null = null;
+    try {
+      items = await listTestErrors();
+    } catch (err) {
+      error = friendlyQueryError(err);
+    }
+    return (
+      <div>
+        <header className="mb-6 flex items-center gap-3">
+          <Link
+            href="/review"
+            className="rounded-lg px-2 py-1 text-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800"
+            aria-label="返回"
+          >
+            ←
+          </Link>
+          <h1 className="text-2xl font-bold text-zinc-900">错题集</h1>
+        </header>
+
+        {error ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {error}
+          </div>
+        ) : items.length === 0 ? (
+          <EmptyState
+            icon={<PartyPopper className="h-10 w-10" />}
+            title="没有错题"
+            description="测试里选错的卡会出现在这里，供你单独再背。"
+          />
+        ) : (
+          <TestErrors items={items} />
+        )}
+      </div>
+    );
+  }
+
   // ===== 测试 =====
   if (mode === "test") {
     let cards: Awaited<ReturnType<typeof listAllCards>> = [];
     let error: string | null = null;
     let title = "综合测试";
-    const backHref = theme ? "/groups" : "/review";
+    let presentLangs: Lang[] = [];
+    const backHref = theme ? "/cards?view=theme" : "/review";
+    // 只有「综合测试」（不指定合集/主题）才显示语言 chip。
+    const isComprehensive = !theme && !note;
     try {
       if (theme) {
         cards = await listThemeCards(theme);
@@ -119,7 +176,15 @@ export default async function ReviewPage({
         title = noteId ? ((await getNote(noteId))?.title ?? "测试") : "独立卡片";
         if (cardKind) title += kindSuffixOf(cardKind);
       } else {
-        cards = await listAllCards();
+        const all = await listAllCards();
+        presentLangs = presentLangsOf(all);
+        // 指定了语言且该语言确实存在 → 只测这一种；否则测全部。
+        if (lang && presentLangs.includes(lang as Lang)) {
+          cards = all.filter((c) => detectLang(c.front) === lang);
+          title = `${LANG_LABEL[lang as Lang]}测试`;
+        } else {
+          cards = all;
+        }
       }
     } catch (err) {
       error = friendlyQueryError(err);
@@ -137,12 +202,105 @@ export default async function ReviewPage({
           <h1 className="text-2xl font-bold text-zinc-900">测试 · {title}</h1>
         </header>
 
+        {/* 综合测试的语言筛选 chip（只有多种语言时才显示，避免混用） */}
+        {isComprehensive && presentLangs.length > 1 && (
+          <div className="mb-4 flex flex-wrap gap-1.5">
+            <Link
+              href="/review?mode=test"
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                !lang
+                  ? "bg-zinc-800 text-white"
+                  : "border border-zinc-200 text-zinc-500 hover:bg-zinc-50"
+              }`}
+            >
+              全部语言
+            </Link>
+            {presentLangs.map((l) => (
+              <Link
+                key={l}
+                href={`/review?mode=test&lang=${l}`}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  lang === l
+                    ? "bg-zinc-800 text-white"
+                    : `${LANG_COLOR[l]} border border-transparent hover:opacity-80`
+                }`}
+              >
+                {LANG_LABEL[l]}
+              </Link>
+            ))}
+          </div>
+        )}
+
         {error ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             {error}
           </div>
         ) : (
-          <TestSession cards={cards} title={title} backHref={backHref} />
+          <TestSession
+            key={`${note ?? ""}|${kind ?? ""}|${theme ?? ""}|${lang ?? ""}`}
+            cards={cards}
+            title={title}
+            backHref={backHref}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ===== 故事模式 =====
+  if (mode === "story") {
+    // 基于「正在背的合集」：从复习主页的合集进入，带 note/kind 参数。
+    const noteId = note === "orphans" ? null : note ?? null;
+    const cardKind = parseKind(kind);
+    const hasCollection = note !== undefined;
+    let pool: { id: string; front: string; back: string | null }[] = [];
+    let storyError: string | null = null;
+    let storyTitle: string | null = null;
+
+    if (hasCollection) {
+      try {
+        const cards = await listCollectionCards(noteId, cardKind);
+        // 优先用生词卡编故事；这个合集没有生词卡就退回普通卡。
+        const words = cards.filter((c) => c.kind === "word" && c.front.trim());
+        const source =
+          words.length > 0 ? words : cards.filter((c) => c.front.trim());
+        pool = source.map((c) => ({ id: c.id, front: c.front, back: c.back }));
+        storyTitle = noteId
+          ? ((await getNote(noteId))?.title ?? "合集")
+          : "独立卡片";
+        if (cardKind) storyTitle += kindSuffixOf(cardKind);
+      } catch (err) {
+        storyError = friendlyQueryError(err);
+      }
+    }
+
+    return (
+      <div>
+        <header className="mb-6 flex items-center gap-3">
+          <Link
+            href="/review"
+            className="rounded-lg px-2 py-1 text-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800"
+            aria-label="返回"
+          >
+            ←
+          </Link>
+          <h1 className="text-2xl font-bold text-zinc-900">
+            故事模式{storyTitle ? ` · ${storyTitle}` : ""}
+          </h1>
+        </header>
+
+        {!hasCollection ? (
+          <EmptyState
+            icon={<BookOpen className="h-10 w-10" />}
+            title="请先选择合集"
+            description="回复习主页，从「正在背的合集」点「故事模式」进入。"
+          />
+        ) : storyError ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {storyError}
+          </div>
+        ) : (
+          <StoryMode cards={pool} />
         )}
       </div>
     );
@@ -197,7 +355,7 @@ export default async function ReviewPage({
           </div>
         ) : items.length === 0 ? (
           <EmptyState
-            icon="🎉"
+            icon={<PartyPopper className="h-10 w-10" />}
             title="这个文件都复习完了"
             description="回文件列表选别的背，或明天到期再来。"
           />
@@ -231,7 +389,7 @@ export default async function ReviewPage({
       <div>
         <header className="mb-6 flex items-center gap-3">
           <Link
-            href="/groups"
+            href="/cards?view=theme"
             className="rounded-lg px-2 py-1 text-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800"
             aria-label="返回"
           >
@@ -248,7 +406,7 @@ export default async function ReviewPage({
           </div>
         ) : items.length === 0 ? (
           <EmptyState
-            icon="🎉"
+            icon={<PartyPopper className="h-10 w-10" />}
             title="这个主题都复习完了"
             description="回词群页换一个主题，或明天到期再来。"
           />
@@ -281,7 +439,7 @@ export default async function ReviewPage({
           weakCards={overview.weakCards}
         />
       ) : (
-        <EmptyState icon="🔁" title="加载中…" description="" />
+        <EmptyState icon={<RefreshCw className="h-10 w-10" />} title="加载中…" description="" />
       )}
     </div>
   );

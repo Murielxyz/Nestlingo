@@ -5,7 +5,7 @@ import { CardDetail } from "@/components/card-detail";
 /** 允许的来源页面（对应返回箭头的去向），其它值一律走默认返回。 */
 const FROM_PAGES: Record<string, string> = {
   "/review": "/review",
-  "/groups": "/groups",
+  "/groups": "/cards?view=theme",
   "/cards": "/cards",
 };
 

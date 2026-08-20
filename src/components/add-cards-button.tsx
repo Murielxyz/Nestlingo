@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { FileUp, CircleCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { parseCards, type ParsedCard } from "@/lib/parse-cards";
 import type { RecognitionRules } from "@/lib/types";
@@ -34,6 +35,8 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [rules, setRules] = useState<RecognitionRules | null>(null);
+  const [fileBusy, setFileBusy] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 拉取自定义识别规则，识别时按它归类表头。
   useEffect(() => {
@@ -59,6 +62,49 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
     setError(null);
   }
 
+  // 导入 Excel / CSV / Word 文件：读成文本后填进输入框，再让用户点「识别成卡片」。
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setFileBusy(true);
+    setError(null);
+    try {
+      const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+      const buf = await file.arrayBuffer();
+      let text = "";
+      if (ext === "docx") {
+        // Word：动态加载 mammoth，抽成纯文本（词表/表格按行铺开）。
+        const mammoth = await import("mammoth");
+        const res = await mammoth.extractRawText({ arrayBuffer: buf });
+        text = res.value;
+      } else {
+        // Excel（xlsx/xls）/ CSV：读第一张表，转成「制表符分隔」文本，识别成表格。
+        const XLSX = await import("xlsx");
+        const wb = XLSX.read(buf, { type: "array" });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        if (!sheet) throw new Error("文件里没有可读的工作表。");
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as unknown[][];
+        text = rows
+          .map((r) =>
+            r.map((cell) => (cell == null ? "" : String(cell)).trim()).join("\t")
+          )
+          .join("\n");
+      }
+      if (!text.trim()) {
+        setError("没有从文件里读到内容，请确认不是空的文件。");
+        return;
+      }
+      setSource(text);
+      // 文件名当默认标题（用户可再改）。
+      if (!title.trim()) setTitle(file.name.replace(/\.[^.]+$/, ""));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFileBusy(false);
+    }
+  }
+
   function update(i: number, field: "front" | "back", value: string) {
     setCards((prev) =>
       prev.map((c, idx) => (idx === i ? { ...c, [field]: value } : c))
@@ -75,6 +121,7 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
       .map((c, i) => ({
         front: c.front.trim(),
         back: c.back.trim(),
+        kind: c.kind ?? null,
         position: i,
       }));
     if (rows.length === 0) {
@@ -129,7 +176,7 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
 
         {done ? (
           <div className="px-4 py-10 text-center">
-            <p className="text-3xl">✅</p>
+            <CircleCheck className="mx-auto h-10 w-10 text-teal-500" />
             <p className="mt-3 text-sm text-zinc-700">
               已把 {cards.length} 张卡片放进「{title.trim() || "未命名卡片集"}」。
             </p>
@@ -156,6 +203,25 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
                 placeholder="粘贴内容，例如：&#10;词汇	读音	释义&#10;สวัสดี	sà-wàt-dii	你好"
                 className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 focus:border-teal-500 focus:outline-none"
               />
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-zinc-400">支持导入 Excel / CSV / Word</span>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={fileBusy}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-60"
+                >
+                  <FileUp className="h-3.5 w-3.5" />
+                  {fileBusy ? "读取中…" : "导入文件"}
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv,.docx"
+                  className="hidden"
+                  onChange={handleFile}
+                />
+              </div>
               <button
                 onClick={parse}
                 className="w-full rounded-lg border border-teal-200 px-4 py-2 text-sm font-medium text-teal-600 hover:bg-teal-50"

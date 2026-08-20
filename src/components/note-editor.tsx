@@ -4,11 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Folder } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { ConvertToCards } from "./convert-to-cards";
 import { ShareModal } from "./share-modal";
 import { CardSidebar } from "./card-sidebar";
-import type { Folder, Note } from "@/lib/types";
+import type { Folder as FolderType, Note } from "@/lib/types";
 import type { JSONContent } from "@tiptap/core";
 
 // 富文本编辑器只在客户端渲染，避免 SSR 水合问题。
@@ -32,7 +33,7 @@ export function NoteEditor({
   cardCount,
 }: {
   note: Note;
-  folders: Folder[];
+  folders: FolderType[];
   backHref: string;
   cardCount: number;
 }) {
@@ -231,7 +232,7 @@ export function NoteEditor({
           className="w-full border-none bg-transparent text-2xl font-bold text-zinc-900 placeholder-zinc-300 focus:outline-none md:text-3xl"
         />
       </div>
-      <RichTextEditor initialContent={note.content} onChange={handleChange} />
+      <RichTextEditor initialContent={note.content} onChange={handleChange} noteId={note.id} />
     </>
   );
 
@@ -313,7 +314,10 @@ export function NoteEditor({
                         : "text-zinc-700 hover:bg-zinc-100"
                     }`}
                   >
-                    <span className="truncate">📁 {f.name}</span>
+                    <span className="flex min-w-0 items-center gap-1.5 truncate">
+                      <Folder className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                      <span className="truncate">{f.name}</span>
+                    </span>
                     {folderId === f.id && <span>✓</span>}
                   </button>
                 ))}
@@ -359,13 +363,15 @@ export function NoteEditor({
                   转成闪卡
                 </button>
 
-                <Link
-                  href={`/notes/${note.id}/cards`}
-                  onClick={() => setMenuOpen(false)}
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    handleFlashcards();
+                  }}
                   className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-100"
                 >
                   查看闪卡
-                </Link>
+                </button>
 
                 <div className="my-1 h-px bg-zinc-100" />
 
@@ -422,7 +428,11 @@ export function NoteEditor({
 
         {/* 右：闪卡侧栏（仅分栏时） */}
         {showCards && (
-          <CardSidebar noteId={note.id} onClose={() => setShowCards(false)} />
+          <CardSidebar
+            noteId={note.id}
+            onClose={() => setShowCards(false)}
+            onConvert={() => setConvertOpen(true)}
+          />
         )}
       </div>
 

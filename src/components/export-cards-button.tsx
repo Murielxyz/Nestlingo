@@ -32,7 +32,7 @@ export function ExportCardsButton() {
       className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-60"
     >
       <Download className="h-4 w-4" />
-      {busy ? "导出中…" : "导出"}
+      {busy ? "导出中…" : "导出全部"}
     </button>
   );
 }

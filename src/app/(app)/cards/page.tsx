@@ -1,27 +1,91 @@
-import { listCardGroups, listOrphanCards, friendlyQueryError } from "@/lib/supabase/queries";
+import Link from "next/link";
+import {
+  listCardGroups,
+  listOrphanCards,
+  listWordCards,
+  listWordThemes,
+  getUserSettings,
+  friendlyQueryError,
+} from "@/lib/supabase/queries";
 import { AddCardsButton } from "@/components/add-cards-button";
 import { ExportCardsButton } from "@/components/export-cards-button";
 import { CardsView } from "@/components/cards-view";
+import { GroupBrowser } from "@/components/group-browser";
 import { EmptyState } from "@/components/empty-state";
+import { Layers, Tags } from "lucide-react";
 import type { Card, CardFolderGroup } from "@/lib/types";
 
-export default async function CardsPage() {
+type View = "source" | "theme";
+
+/** 顶部「按来源 / 按主题」切换：用链接 + 查询参数切换，可分享、可从详情页退回。 */
+function ViewSwitch({ view }: { view: View }) {
+  const tab = (active: boolean) =>
+    `inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+      active ? "bg-teal-600 text-white shadow-sm" : "text-zinc-500 hover:text-zinc-900"
+    }`;
+  return (
+    <div className="mb-5 inline-flex items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1">
+      <Link href="/cards" className={tab(view === "source")}>
+        <Layers className="h-4 w-4" />
+        按来源
+      </Link>
+      <Link href="/cards?view=theme" className={tab(view === "theme")}>
+        <Tags className="h-4 w-4" />
+        按主题
+      </Link>
+    </div>
+  );
+}
+
+export default async function CardsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
+  const { view: viewParam } = await searchParams;
+  const view: View = viewParam === "theme" ? "theme" : "source";
+
+  // 按来源：所有卡按「来源笔记」分组。
   let groups: CardFolderGroup[] = [];
   let orphans: Card[] = [];
-  let error: string | null = null;
+  // 按主题：只归类生词（kind='word'）到场景主题。
+  let wordCards: Awaited<ReturnType<typeof listWordCards>> = [];
+  let themes: Awaited<ReturnType<typeof listWordThemes>> = [];
+  let hiddenThemes: string[] = [];
+  let sourceError: string | null = null;
+  let themeError: string | null = null;
+
   try {
     [groups, orphans] = await Promise.all([listCardGroups(), listOrphanCards()]);
   } catch (err) {
-    error = friendlyQueryError(err);
+    sourceError = friendlyQueryError(err);
+  }
+  try {
+    wordCards = await listWordCards();
+  } catch (err) {
+    themeError = friendlyQueryError(err);
+  }
+  // 自定义分类表 / 设置可能还没迁移，出错就退回空（不影响内置主题）。
+  try {
+    themes = await listWordThemes();
+  } catch {
+    themes = [];
+  }
+  try {
+    hiddenThemes = (await getUserSettings()).hidden_themes ?? [];
+  } catch {
+    hiddenThemes = [];
   }
 
   const totalNotes = groups.reduce((s, g) => s + g.notes.length, 0);
+  const activeError = view === "theme" ? themeError : sourceError;
 
   return (
     <div>
-      <header className="mb-6 flex items-start justify-between gap-4">
+      <header className="mb-5 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-zinc-900">闪卡</h1>
+          <p className="mt-1 text-sm text-zinc-500">按来源或按主题浏览、管理你的闪卡。</p>
         </div>
         <div className="flex items-center gap-2">
           <ExportCardsButton />
@@ -29,16 +93,20 @@ export default async function CardsPage() {
         </div>
       </header>
 
-      {error ? (
+      <ViewSwitch view={view} />
+
+      {activeError ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          {error}
+          {activeError}
         </div>
       ) : totalNotes === 0 && orphans.length === 0 ? (
         <EmptyState
-          icon="🃏"
+          icon={<Layers className="h-10 w-10" />}
           title="还没有闪卡"
           description="在笔记里点「⋯ → 转成闪卡」自动生成，或点右上角「＋ 添加闪卡」粘贴内容。"
         />
+      ) : view === "theme" ? (
+        <GroupBrowser cards={wordCards} themes={themes} hiddenThemes={hiddenThemes} />
       ) : (
         <CardsView groups={groups} orphans={orphans} />
       )}

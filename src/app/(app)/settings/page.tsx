@@ -1,5 +1,5 @@
 import { getUserSettings, friendlyQueryError } from "@/lib/supabase/queries";
-import { SettingsForm } from "@/components/settings-form";
+import { SettingsForm, LogoutButton } from "@/components/settings-form";
 import { RecognitionRulesForm } from "@/components/recognition-rules-form";
 import { DataBackup } from "@/components/data-backup";
 import type { UserSettings } from "@/lib/types";
@@ -28,6 +28,7 @@ export default async function SettingsPage() {
     reminder_enabled: false,
     reminder_time: null,
     recognition_rules: null,
+    hidden_themes: [],
   };
   let error: string | null = null;
 
@@ -37,7 +38,15 @@ export default async function SettingsPage() {
     error = friendlyQueryError(err);
   }
 
-  const hasClaude = Boolean(process.env.ANTHROPIC_API_KEY);
+  // 文本 AI 提供商：跟 .env.local 的 AI_PROVIDER 一致（deepseek 或 anthropic）
+  const provider = (process.env.AI_PROVIDER ?? "anthropic").trim().toLowerCase();
+  const hasAiKey =
+    provider === "deepseek"
+      ? Boolean(process.env.DEEPSEEK_API_KEY)
+      : Boolean(process.env.ANTHROPIC_API_KEY);
+  const aiLabel = provider === "deepseek" ? "DeepSeek" : "Claude";
+  const aiKeyName =
+    provider === "deepseek" ? "DEEPSEEK_API_KEY" : "ANTHROPIC_API_KEY";
   const hasOpenAI = Boolean(process.env.OPENAI_API_KEY);
 
   return (
@@ -73,8 +82,8 @@ export default async function SettingsPage() {
         <Section title="AI 功能状态" description="AI 精读与语音转录需要这些 Key。">
           <ul className="space-y-2">
             <li className="flex items-center justify-between rounded-lg bg-zinc-50 px-3 py-2">
-              <span className="text-sm text-zinc-700">AI 精读笔记（Claude）</span>
-              {hasClaude ? (
+              <span className="text-sm text-zinc-700">AI 精读笔记（{aiLabel}）</span>
+              {hasAiKey ? (
                 <span className="text-xs font-medium text-teal-600">已配置 ✓</span>
               ) : (
                 <span className="text-xs font-medium text-amber-600">未配置</span>
@@ -89,16 +98,21 @@ export default async function SettingsPage() {
               )}
             </li>
           </ul>
-          {(!hasClaude || !hasOpenAI) && (
+          {(!hasAiKey || !hasOpenAI) && (
             <p className="mt-3 text-xs leading-relaxed text-zinc-400">
               在项目根目录的 <code className="rounded bg-zinc-100 px-1">.env.local</code> 里填入
-              {!hasClaude && " ANTHROPIC_API_KEY"}
-              {!hasClaude && !hasOpenAI && " 和"}
+              {!hasAiKey && ` ${aiKeyName}`}
+              {!hasAiKey && !hasOpenAI && " 和"}
               {!hasOpenAI && " OPENAI_API_KEY"}
               ，保存后重启开发服务器即可生效。
             </p>
           )}
         </Section>
+
+        {/* 退出登录放到最底部 */}
+        <div className="pt-2">
+          <LogoutButton />
+        </div>
       </div>
     </div>
   );

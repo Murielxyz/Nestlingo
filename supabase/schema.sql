@@ -65,6 +65,9 @@ create table if not exists public.cards (
 -- 给已存在的库补 kind 列（幂等；新建库上面的 create table 已含）
 alter table public.cards add column if not exists kind text;
 
+-- 给已存在的库补 theme 列（词群页「AI 智能整理」把生词归到的场景主题 key，删卡即随之消失）
+alter table public.cards add column if not exists theme text;
+
 -- ============================================================
 -- 表 4：复习状态 review_state（SM-2 间隔重复，每张卡一条）
 -- ============================================================
@@ -100,6 +103,9 @@ create table if not exists public.user_settings (
 
 -- 给已存在的库补 recognition_rules 列（幂等）
 alter table public.user_settings add column if not exists recognition_rules jsonb;
+
+-- 给已存在的库补 hidden_themes 列（幂等）：用户隐藏（删除）的内置词群主题 key
+alter table public.user_settings add column if not exists hidden_themes text[] default '{}';
 
 -- ============================================================
 -- 索引（加快按用户 / 按文件夹 / 按笔记 / 按到期查询）
@@ -190,3 +196,27 @@ alter table public.word_themes enable row level security;
 drop policy if exists "word_themes_own" on public.word_themes;
 create policy "word_themes_own" on public.word_themes
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ============================================================
+-- 表 7：测试错题集 test_errors（测试里选错的卡，独立于 SM-2 复习评分）
+-- ============================================================
+create table if not exists public.test_errors (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null default auth.uid(),
+  card_id    uuid not null references public.cards(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, card_id)
+);
+
+create index if not exists test_errors_user_id_idx on public.test_errors (user_id);
+
+alter table public.test_errors enable row level security;
+
+drop policy if exists "test_errors_own" on public.test_errors;
+create policy "test_errors_own" on public.test_errors
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop trigger if exists test_errors_set_updated_at on public.test_errors;
+create trigger test_errors_set_updated_at before update on public.test_errors
+  for each row execute function public.set_updated_at();

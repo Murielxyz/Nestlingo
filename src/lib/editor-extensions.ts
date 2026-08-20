@@ -11,6 +11,8 @@ import TableHeader from "@tiptap/extension-table-header";
 import { Columns, Column } from "./columns-extension";
 import { Callout } from "./callout-extension";
 import { MediaEmbed } from "./media-embed-extension";
+import { Translation } from "./translation-mark";
+import { Furigana } from "./furigana-mark";
 
 // 表格：resizable 开启内置的列宽拖拽（prosemirror-tables 的 columnResizing 插件）。
 // 列宽存进单元格 colwidth，generateHTML（分享图 / 阅读模式）也会输出 colgroup，两边一致。
@@ -20,6 +22,8 @@ const TableResizable = Table.configure({ resizable: true });
 export const editorExtensions = [
   StarterKit,
   Highlight,
+  Translation,
+  Furigana,
   Image,
   TableResizable,
   TableRow,

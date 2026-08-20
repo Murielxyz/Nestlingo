@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { SquareCheckBig, Pencil, Trash2, Search } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Card } from "@/lib/types";
+import { detectLang, LANG_LABEL, LANG_COLOR } from "@/lib/lang-detect";
 import { SpeakButton } from "./speak-button";
 
 /**
@@ -21,6 +23,19 @@ export function NoteCards({ cards, noteId }: { cards: Card[]; noteId?: string })
   const [newFront, setNewFront] = useState("");
   const [newBack, setNewBack] = useState("");
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+
+  // 搜索：按正面 / 背面文字过滤（不区分大小写）。
+  const q = query.trim().toLowerCase();
+  const visible = q
+    ? cards.filter(
+        (c) =>
+          c.front.toLowerCase().includes(q) ||
+          (c.back ?? "").toLowerCase().includes(q)
+      )
+    : cards;
+  const allVisibleSelected =
+    visible.length > 0 && visible.every((c) => selected.has(c.id));
 
   async function addCard(e: React.FormEvent) {
     e.preventDefault();
@@ -49,7 +64,7 @@ export function NoteCards({ cards, noteId }: { cards: Card[]; noteId?: string })
 
   function toggleAll() {
     setSelected((prev) =>
-      prev.size === cards.length ? new Set() : new Set(cards.map((c) => c.id))
+      allVisibleSelected ? new Set() : new Set(visible.map((c) => c.id))
     );
   }
 
@@ -69,6 +84,19 @@ export function NoteCards({ cards, noteId }: { cards: Card[]; noteId?: string })
 
   return (
     <div className="space-y-4">
+      {/* 搜索 */}
+      {cards.length > 0 && (
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索这个合集里的词 / 释义…"
+            className="w-full rounded-xl border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm focus:border-teal-500 focus:outline-none"
+          />
+        </div>
+      )}
+
       {/* 操作栏 */}
       <div className="flex flex-wrap items-center gap-2">
         {noteId && (
@@ -86,7 +114,7 @@ export function NoteCards({ cards, noteId }: { cards: Card[]; noteId?: string })
               onClick={toggleAll}
               className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-50"
             >
-              {selected.size === cards.length ? "取消全选" : "全选"}
+              {allVisibleSelected ? "取消全选" : "全选"}
             </button>
             <span className="text-sm text-zinc-500">已选 {selected.size}</span>
             <button
@@ -109,9 +137,10 @@ export function NoteCards({ cards, noteId }: { cards: Card[]; noteId?: string })
         ) : (
           <button
             onClick={() => setSelecting(true)}
-            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm text-zinc-600 transition-colors hover:bg-zinc-50"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm text-zinc-600 transition-colors hover:bg-zinc-50"
           >
-            ☑ 选择
+            <SquareCheckBig className="h-4 w-4" />
+            选择
           </button>
         )}
       </div>
@@ -154,9 +183,13 @@ export function NoteCards({ cards, noteId }: { cards: Card[]; noteId?: string })
             <> 去卡片页点「＋ 添加闪卡」生成。</>
           )}
         </div>
+      ) : visible.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-500">
+          没有匹配「{query.trim()}」的卡片。
+        </div>
       ) : (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {cards.map((card) => (
+          {visible.map((card) => (
             <li key={card.id}>
               <CardItem
                 card={card}
@@ -197,6 +230,7 @@ function CardItem({
   const [front, setFront] = useState(card.front);
   const [back, setBack] = useState(card.back ?? "");
   const [menuOpen, setMenuOpen] = useState(false);
+  const lang = detectLang(card.front);
 
   async function saveEdit() {
     const supabase = createClient();
@@ -269,9 +303,16 @@ function CardItem({
         }`}
       >
         <div className="flex items-start justify-between">
-          <p className="text-[11px] uppercase tracking-wide text-zinc-400">
-            {flipped ? "背面" : "正面"}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="text-[11px] uppercase tracking-wide text-zinc-400">
+              {flipped ? "背面" : "正面"}
+            </p>
+            <span
+              className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${LANG_COLOR[lang]}`}
+            >
+              {LANG_LABEL[lang]}
+            </span>
+          </div>
           {selecting && (
             <span
               className={`-mr-1 -mt-1 flex h-5 w-5 items-center justify-center rounded-full border text-xs ${
@@ -301,10 +342,11 @@ function CardItem({
       {selecting && (
         <button
           onClick={onStartEdit}
-          className="absolute bottom-2 right-2 rounded-md bg-white px-2 py-1 text-xs text-zinc-500 shadow-sm hover:bg-zinc-100 hover:text-zinc-700"
+          className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 text-xs text-zinc-500 shadow-sm hover:bg-zinc-100 hover:text-zinc-700"
           aria-label="编辑卡片"
         >
-          ✏️ 编辑
+          <Pencil className="h-3.5 w-3.5" />
+          编辑
         </button>
       )}
 
@@ -330,18 +372,20 @@ function CardItem({
                     setMenuOpen(false);
                     onStartEdit();
                   }}
-                  className="block w-full px-3 py-1.5 text-left text-zinc-700 hover:bg-zinc-50"
+                  className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-zinc-700 hover:bg-zinc-50"
                 >
-                  ✏️ 编辑
+                  <Pencil className="h-3.5 w-3.5" />
+                  编辑
                 </button>
                 <button
                   onClick={() => {
                     setMenuOpen(false);
                     deleteCard();
                   }}
-                  className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-50"
+                  className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-red-600 hover:bg-red-50"
                 >
-                  🗑 删除
+                  <Trash2 className="h-3.5 w-3.5" />
+                  删除
                 </button>
               </div>
             </>
