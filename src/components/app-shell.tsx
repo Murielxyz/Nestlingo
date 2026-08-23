@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { NotebookPen, RefreshCw, Layers, Settings } from "lucide-react";
+import { NotebookPen, RefreshCw, Layers, Settings, Inbox } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { BrandMark } from "./brand-mark";
@@ -11,7 +11,8 @@ import { BrandMark } from "./brand-mark";
 const NAV_ITEMS: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/notes", label: "笔记", icon: NotebookPen },
   { href: "/review", label: "复习", icon: RefreshCw },
-  { href: "/cards", label: "卡片", icon: Layers },
+  { href: "/cards", label: "闪卡", icon: Layers },
+  { href: "/materials", label: "素材", icon: Inbox },
   { href: "/settings", label: "设置", icon: Settings },
 ];
 
@@ -36,6 +37,14 @@ export function AppShell({
     pathname === "/notes" ||
     /^\/notes\/[^/]+$/.test(pathname) ||
     /^\/notes\/folder\/[^/]+$/.test(pathname);
+
+  // 单篇笔记页自带「返回 + 保存」头部，mobile 端不再叠一层全局顶栏（避免两个 sticky 头重叠）。
+  const isNoteDetail = /^\/notes\/[^/]+$/.test(pathname) && pathname !== "/notes";
+
+  // 进入笔记区（自带文件夹/列表/内容三栏导航）时，一级导航自动收成窄条，把宽度让给笔记三栏；离开恢复展开。
+  useEffect(() => {
+    setCollapsed(isNotes);
+  }, [isNotes]);
 
   // 每日复习提醒：应用打开时，若到了设置的时间且已开启，弹一条系统通知（当天只弹一次）。
   useEffect(() => {
@@ -144,28 +153,8 @@ export function AppShell({
         )}
       </aside>
 
-      {/* ===== 移动端顶栏 ===== */}
-      <header className="md:hidden sticky top-0 z-10 flex items-center justify-between border-b border-zinc-200 bg-white px-4 py-3">
-        <div className="flex items-center gap-2">
-          <BrandMark className="h-6 w-6" />
-          <span className="leading-tight">
-            <span className="block text-sm font-bold text-zinc-900">语巢</span>
-            <span className="block text-[10px] font-medium tracking-wide text-zinc-400">
-              Nestlingo
-            </span>
-          </span>
-        </div>
-        <Link
-          href="/settings"
-          className="rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs text-zinc-600"
-          aria-label="设置"
-        >
-          <Settings className="h-4 w-4" />
-        </Link>
-      </header>
-
-      {/* ===== 主内容区 ===== */}
-      <main className={`pb-20 md:pb-0 transition-[padding] duration-200 ${collapsed ? "md:pl-14" : "md:pl-64"}`}>
+      {/* ===== 主内容区（移动端底部让出导航 + 底部安全区；顶部让出状态栏安全区） ===== */}
+      <main className={`transition-[padding] duration-200 ${collapsed ? "md:pl-14" : "md:pl-64"} ${isNoteDetail ? "" : "pt-[max(1rem,env(safe-area-inset-top))]"} ${isNoteDetail ? "pb-0" : "pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0"}`}>
         {isNotes ? (
           <div className="min-h-screen bg-white">{children}</div>
         ) : (
@@ -173,25 +162,28 @@ export function AppShell({
         )}
       </main>
 
-      {/* ===== 移动端底部导航 ===== */}
-      <nav className="md:hidden fixed inset-x-0 bottom-0 z-10 flex border-t border-zinc-200 bg-white">
-        {NAV_ITEMS.map((item) => {
-          const active = isActive(pathname, item.href);
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-xs ${
-                active ? "text-teal-600" : "text-zinc-500"
-              }`}
-            >
-              <Icon className="h-5 w-5" />
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
+      {/* ===== 移动端底部导航（底部放出安全区，避免被 home indicator 压住） ===== */}
+      {/* 笔记编辑页顶部已有返回键，底部导航不显示，避免编辑时遮挡。 */}
+      {!isNoteDetail && (
+        <nav className="md:hidden fixed inset-x-0 bottom-0 z-10 flex border-t border-zinc-200 bg-white pb-[env(safe-area-inset-bottom)]">
+          {NAV_ITEMS.map((item) => {
+            const active = isActive(pathname, item.href);
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-xs ${
+                  active ? "text-teal-600" : "text-zinc-500"
+                }`}
+              >
+                <Icon className="h-5 w-5" />
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+      )}
     </div>
   );
 }

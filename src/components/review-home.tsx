@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { FlaskConical, Play, FolderOpen, Sparkles, BookX } from "lucide-react";
 import type { ReviewStats, CollectionSummary } from "@/lib/types";
 import type { ReviewItem } from "@/lib/supabase/queries";
 import { SpeakButton } from "./speak-button";
+import { CardFront } from "./card-front";
 
 function kindBadge(kind: string | null) {
   if (kind === "word") return "生词";
@@ -20,6 +21,22 @@ function collectionHref(c: CollectionSummary, mode?: string): string {
   const kind = c.kind ? `&kind=${c.kind}` : "";
   const m = mode ? `&mode=${mode}` : "";
   return base + kind + m;
+}
+
+/** 读取上次在背的合集（背了几张就由 review-session 写入 localStorage 的进度）。 */
+function findStoredActiveCollection(
+  collections: CollectionSummary[]
+): CollectionSummary | null {
+  try {
+    const raw = localStorage.getItem("ln_active_collection");
+    if (!raw) return null;
+    const stored = JSON.parse(raw) as { key?: string } | null;
+    if (!stored?.key) return null;
+    return collections.find((c) => c.key === stored.key) ?? null;
+  } catch {
+    // localStorage 不可用 / 内容损坏都忽略，不影响兜底逻辑。
+    return null;
+  }
 }
 
 /**
@@ -39,8 +56,8 @@ export function ReviewHome({
   collections: CollectionSummary[];
   weakCards: ReviewItem[];
 }) {
-  // 「正在背的合集」：优先最近复习过的那一个；都没复习过就取到期最多（或第一个）。
-  // 用户可在弹窗里切换，切换后记在 state 里。
+  // 「正在背的合集」：先按最近复习、到期最多、第一个兜底（确定性，避免 SSR 与客户端不一致）；
+  // 挂载后再读上次背过的那个（背了几张就落 localStorage 的进度）切换过去。用户也可在弹窗里切换。
   const [current, setCurrent] = useState<CollectionSummary | null>(() => {
     const reviewed = collections
       .filter((c) => c.lastReviewedAt != null)
@@ -48,6 +65,11 @@ export function ReviewHome({
     if (reviewed) return reviewed;
     return collections.find((c) => c.due > 0) ?? collections[0] ?? null;
   });
+  useEffect(() => {
+    const stored = findStoredActiveCollection(collections);
+    if (stored) setCurrent(stored);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   // 「到期待复习」只看「正在背的合集」里的新旧待复习卡（不数全局，避免随新卡越积越多）。
@@ -60,7 +82,7 @@ export function ReviewHome({
 
   return (
     <div>
-      <header className="mb-5 flex items-center justify-between gap-3">
+      <header className="sticky top-[max(1rem,env(safe-area-inset-top))] z-20 -mx-4 -mt-6 mb-5 flex items-center justify-between gap-3 border-b border-zinc-100 bg-paper/95 px-4 py-3 backdrop-blur md:static md:mx-0 md:mt-0 md:border-0 md:bg-transparent md:px-0 md:py-0">
         <h1 className="text-2xl font-bold text-zinc-900">复习</h1>
         <Link
           href="/review?scope=errors"
@@ -108,13 +130,20 @@ export function ReviewHome({
                 <Play className="h-4 w-4" />
                 继续背
               </Link>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <Link
                   href={collectionHref(current, "test")}
                   className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-teal-200 px-4 py-2 text-sm font-semibold text-teal-600 transition-colors hover:bg-teal-50"
                 >
                   <FlaskConical className="h-4 w-4" />
                   测试
+                </Link>
+                <Link
+                  href={collectionHref(current, "cloze")}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-teal-200 px-4 py-2 text-sm font-semibold text-teal-600 transition-colors hover:bg-teal-50"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  完形填空
                 </Link>
                 <Link
                   href={collectionHref(current, "story")}
@@ -151,7 +180,9 @@ export function ReviewHome({
                 className="card-soft flex items-center gap-3 px-4 py-2.5"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-zinc-900">{w.card.front}</p>
+                  <p className="truncate text-sm font-medium text-zinc-900">
+                    <CardFront text={w.card.front} reading={w.card.reading} />
+                  </p>
                   <p className="truncate text-xs text-zinc-500">{w.card.back || ""}</p>
                 </div>
                 {kindBadge(w.card.kind) && (

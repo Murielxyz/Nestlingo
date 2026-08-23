@@ -4,12 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Folder } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { Folder, ExternalLink } from "lucide-react";
+import { createClient, detachMaterialsFromNote } from "@/lib/supabase/client";
 import { ConvertToCards } from "./convert-to-cards";
 import { ShareModal } from "./share-modal";
 import { CardSidebar } from "./card-sidebar";
-import type { Folder as FolderType, Note } from "@/lib/types";
+import { BackButton } from "./back-button";
+import type { Folder as FolderType, Note, SourceMaterial } from "@/lib/types";
 import type { JSONContent } from "@tiptap/core";
 
 // 富文本编辑器只在客户端渲染，避免 SSR 水合问题。
@@ -31,11 +32,13 @@ export function NoteEditor({
   folders,
   backHref,
   cardCount,
+  sourceMaterials,
 }: {
   note: Note;
   folders: FolderType[];
   backHref: string;
   cardCount: number;
+  sourceMaterials: SourceMaterial[];
 }) {
   const router = useRouter();
   const [title, setTitle] = useState(note.title);
@@ -166,11 +169,10 @@ export function NoteEditor({
     return true;
   }
 
-  /** 「完成」：先把没触发的自动保存立即落一次，再回到笔记列表。 */
+  /** 「完成」：先把没触发的自动保存立即落一次，然后留在本页（不跳离笔记）。 */
   async function finishEdit() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     await save();
-    router.push(backHref);
   }
 
   /** 把笔记收录到某个文件夹。 */
@@ -208,8 +210,17 @@ export function NoteEditor({
     ) {
       return;
     }
+    // 把挂起的自动保存清掉：删除后不该再对这条已删笔记做保存/刷新，
+    // 否则 autosave 的 router.refresh() 会在 /notes/{id} 上重拉已删笔记 → getNote null → notFound → 404。
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    dirtyRef.current = false;
     setError(null);
     const supabase = createClient();
+    const { error: detachError } = await detachMaterialsFromNote(note.id);
+    if (detachError) {
+      setError(detachError.message);
+      return;
+    }
     const { error } = await supabase.from("notes").delete().eq("id", note.id);
     if (error) {
       setError(error.message);
@@ -221,6 +232,21 @@ export function NoteEditor({
   const editorPane = (
     <>
       <div className="px-4 pt-5 md:px-8">
+        {sourceMaterials.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            {sourceMaterials.map((sm) => (
+              <Link
+                key={sm.id}
+                href={`/materials/${sm.id}`}
+                className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2.5 py-1 text-xs font-medium text-teal-700 transition-colors hover:bg-teal-100"
+                title={sm.title || "素材库"}
+              >
+                来自素材：{sm.title || "素材库"}
+                <ExternalLink className="h-3 w-3" />
+              </Link>
+            ))}
+          </div>
+        )}
         <input
           value={title}
           onChange={(e) => {
@@ -245,14 +271,12 @@ export function NoteEditor({
       }
     >
       {/* ===== 顶部：返回 + 菜单 + 完成 ===== */}
-      <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-zinc-200 bg-white/95 px-3 py-2 backdrop-blur md:px-4">
-        <Link
-          href={backHref}
+      <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-zinc-200 bg-white/95 px-3 pt-[max(0.5rem,env(safe-area-inset-top))] py-2 backdrop-blur md:px-4">
+        <BackButton
+          fallback={backHref}
+          forceFallback
           className="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
-          aria-label="返回"
-        >
-          ←
-        </Link>
+        />
 
         {/* 保存状态（居中，安静地显示） */}
         <span className="flex-1 truncate text-center text-xs text-zinc-400">
@@ -399,7 +423,7 @@ export function NoteEditor({
           )}
         </div>
 
-        {/* 完成：保存并返回笔记列表（内容本来就会自动保存） */}
+        {/* 完成：保存当前内容，留在本页不再跳离（要离开用左上角返回） */}
         <button
           onClick={finishEdit}
           disabled={saving}
@@ -440,7 +464,7 @@ export function NoteEditor({
       {!showCards && (
         <button
           onClick={handleFlashcards}
-          className="fixed bottom-20 right-4 z-30 flex items-center gap-1.5 rounded-full bg-teal-600 px-4 py-3 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-teal-700 md:bottom-8 md:right-8"
+          className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-30 flex items-center gap-1.5 rounded-full bg-teal-600 px-4 py-3 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-teal-700 md:bottom-8 md:right-8"
         >
           {cardCount > 0 ? "闪卡" : "转成闪卡"}
         </button>
