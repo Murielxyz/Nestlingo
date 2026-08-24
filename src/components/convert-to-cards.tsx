@@ -322,7 +322,7 @@ export function ConvertToCards({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4">
-      <div className="flex max-h-[88vh] w-full flex-col rounded-t-2xl bg-white shadow-xl sm:max-w-lg sm:rounded-2xl">
+      <div className="flex max-h-[88vh] w-full flex-col rounded-t-3xl bg-white shadow-xl sm:max-w-lg sm:rounded-2xl">
         <header className="flex items-start justify-between border-b border-zinc-100 px-4 py-3">
           <div>
             <h2 className="text-base font-semibold text-zinc-900">转成闪卡</h2>

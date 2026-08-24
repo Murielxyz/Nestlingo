@@ -186,7 +186,7 @@ export function AppShell({
       {/* 笔记编辑页顶部已有返回键，底部导航不显示，避免编辑时遮挡。 */}
       {/* 复习/测试会话页同样隐藏，专注背诵。 */}
       {!isNoteDetail && !isReviewSession && (
-        <nav className="md:hidden fixed inset-x-0 bottom-0 z-10 flex border-t border-zinc-200 bg-white pb-[env(safe-area-inset-bottom)]">
+        <nav className="md:hidden fixed inset-x-0 bottom-0 z-10 flex border-t border-black/5 bg-white/80 pb-[env(safe-area-inset-bottom)] backdrop-blur-md">
           {NAV_ITEMS.map((item) => {
             const active = isActive(pathname, item.href);
             const Icon = item.icon;

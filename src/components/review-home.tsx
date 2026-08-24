@@ -251,7 +251,7 @@ export function ReviewHome({
           onClick={() => setPickerOpen(false)}
         >
           <div
-            className="flex max-h-[80vh] w-full flex-col rounded-t-2xl bg-white shadow-xl sm:max-w-lg sm:rounded-2xl"
+            className="flex max-h-[80vh] w-full flex-col rounded-t-3xl bg-white shadow-xl sm:max-w-lg sm:rounded-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <header className="flex items-center justify-between border-b border-zinc-100 px-4 py-3">
