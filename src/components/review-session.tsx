@@ -5,6 +5,9 @@ import { PartyPopper } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { scheduleReview, dueAtFrom, DEFAULT_SCHEDULE, type Rating } from "@/lib/srs";
 import type { ReviewItem } from "@/lib/supabase/queries";
+import { cardLang, LANG_LABEL, LANG_ORDER, type Lang } from "@/lib/lang-detect";
+import { CardBack } from "./card-back";
+import { CardFront } from "./card-front";
 import { SpeakButton } from "./speak-button";
 
 // 淡色系评分按钮：浅底 + 深色文字，不再用饱和的实心色块
@@ -29,9 +32,12 @@ function intervalText(days: number): string {
 export function ReviewSession({
   items,
   dailyGoal = 20,
+  canRememberCollection = true,
 }: {
   items: ReviewItem[];
   dailyGoal?: number;
+  /** 主题背诵不属于「复习主页合集」语义，不要改写「正在背的合集」进度。 */
+  canRememberCollection?: boolean;
 }) {
   // 按每日目标截断本轮队列；多出来的留到下次。
   const sessionItems = items.slice(0, dailyGoal);
@@ -75,7 +81,7 @@ export function ReviewSession({
       <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-16 text-center">
         <PartyPopper className="h-10 w-10 text-teal-500" />
         <p className="mt-4 text-lg font-semibold text-zinc-900">本轮复习完成！</p>
-        <p className="mt-1 text-sm text-zinc-500">共复习 {reviewed} 张卡片。</p>
+        <p className="mt-1 text-sm text-zinc-500">共复习 {reviewed} 张闪卡。</p>
       </div>
     );
   }
@@ -83,6 +89,23 @@ export function ReviewSession({
   async function rate(r: Rating) {
     if (saving) return;
     setSaving(true);
+
+    // 背了这一张就记住「当前在背的合集」，复习主页据此显示「正在背的合集」（背了几张就落这个进度）。
+    if (canRememberCollection) {
+      try {
+        localStorage.setItem(
+          "ln_active_collection",
+          JSON.stringify({
+            key: `${current.card.note_id ?? "orphans"}::${current.card.kind ?? ""}`,
+            noteId: current.card.note_id ?? null,
+            kind: current.card.kind ?? null,
+            at: Date.now(),
+          })
+        );
+      } catch {
+        // localStorage 不可用（隐私模式等）就忽略，不影响背诵。
+      }
+    }
 
     const sched = scheduleReview(prev, r);
 
@@ -134,9 +157,9 @@ export function ReviewSession({
   }
 
   // 列表里编辑 / 删除后，同步本地队列与已复习列表（避免要刷新页面才更新）。
-  function patchCard(id: string, front: string, back: string) {
+  function patchCard(id: string, front: string, back: string, lang: string | null) {
     const patch = (i: ReviewItem): ReviewItem =>
-      i.card.id === id ? { ...i, card: { ...i.card, front, back } } : i;
+      i.card.id === id ? { ...i, card: { ...i.card, front, back, lang } } : i;
     setQueue((q) => q.map(patch));
     setReviewedCards((f) => f.map(patch));
   }
@@ -163,18 +186,28 @@ export function ReviewSession({
       <div className="relative">
         <button
           onClick={() => setFlipped((f) => !f)}
-          className="flex min-h-[280px] w-full flex-col items-center justify-center rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-sm transition-colors hover:border-teal-300"
+          className="flex min-h-[60vh] w-full flex-col items-center justify-center rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-sm transition-colors hover:border-teal-300 sm:min-h-[320px]"
         >
           <p className="mb-3 text-xs uppercase tracking-wide text-zinc-400">
             {flipped ? "背面 · 答案" : "正面 · 点击翻面"}
           </p>
-          <p className="whitespace-pre-wrap text-2xl font-semibold leading-relaxed text-zinc-900">
-            {flipped ? current.card.back || "（空）" : current.card.front}
-          </p>
+          {/* 正面大（要记的词/句），背面可读大小（定义 + 例句，避免 text-2xl 撑爆整句） */}
+          <div
+            className={`w-full leading-relaxed text-zinc-900 ${
+              flipped ? "text-lg font-medium" : "text-3xl font-semibold"
+            }`}
+          >
+            {flipped ? (
+              <CardBack back={current.card.back ?? ""} />
+            ) : (
+              <CardFront text={current.card.front} reading={current.card.reading} />
+            )}
+          </div>
         </button>
         <div className="absolute right-3 top-3">
           <SpeakButton
             text={flipped ? current.card.back || current.card.front : current.card.front}
+            lang={cardLang(current.card)}
           />
         </div>
       </div>
@@ -259,7 +292,7 @@ function ReviewListCard({
   onDeleted,
 }: {
   item: ReviewItem;
-  onChanged: (id: string, front: string, back: string) => void;
+  onChanged: (id: string, front: string, back: string, lang: string | null) => void;
   onDeleted: (id: string) => void;
 }) {
   const [flipped, setFlipped] = useState(false);
@@ -267,21 +300,22 @@ function ReviewListCard({
   const [menuOpen, setMenuOpen] = useState(false);
   const [front, setFront] = useState(item.card.front);
   const [back, setBack] = useState(item.card.back ?? "");
+  const [lang, setLang] = useState<Lang>(cardLang(item.card));
 
   async function saveEdit() {
     const supabase = createClient();
     const { error } = await supabase
       .from("cards")
-      .update({ front: front.trim(), back: back.trim() })
+      .update({ front: front.trim(), back: back.trim(), lang })
       .eq("id", item.card.id);
     if (!error) {
-      onChanged(item.card.id, front.trim(), back.trim());
+      onChanged(item.card.id, front.trim(), back.trim(), lang);
       setEditing(false);
     }
   }
 
   async function deleteCard() {
-    if (!window.confirm("删除这张卡片？")) return;
+    if (!window.confirm("删除这张闪卡？")) return;
     const supabase = createClient();
     const { error } = await supabase.from("cards").delete().eq("id", item.card.id);
     if (!error) onDeleted(item.card.id);
@@ -304,6 +338,20 @@ function ReviewListCard({
           rows={2}
           className="w-full rounded-lg border border-zinc-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
         />
+        <div className="flex items-center gap-2 text-sm">
+          <label className="shrink-0 text-xs text-zinc-400">语言</label>
+          <select
+            value={lang}
+            onChange={(e) => setLang(e.target.value as Lang)}
+            className="rounded-lg border border-zinc-300 px-2 py-1 text-sm focus:border-teal-500 focus:outline-none"
+          >
+            {LANG_ORDER.map((l) => (
+              <option key={l} value={l}>
+                {LANG_LABEL[l]}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="flex gap-3 text-sm">
           <button onClick={saveEdit} className="text-teal-600 hover:text-teal-700">
             保存
@@ -312,6 +360,7 @@ function ReviewListCard({
             onClick={() => {
               setFront(item.card.front);
               setBack(item.card.back ?? "");
+              setLang(cardLang(item.card));
               setEditing(false);
             }}
             className="text-zinc-500 hover:text-zinc-700"
@@ -332,9 +381,13 @@ function ReviewListCard({
         <p className="text-[11px] uppercase tracking-wide text-zinc-400">
           {flipped ? "背面" : "正面"}
         </p>
-        <p className="mt-0.5 whitespace-pre-wrap text-sm font-medium text-zinc-900">
-          {flipped ? back || "（空）" : front}
-        </p>
+        <div className="mt-0.5 text-sm font-medium text-zinc-900">
+          {flipped ? (
+            <CardBack back={back ?? ""} />
+          ) : (
+            <CardFront text={front} reading={item.card.reading} />
+          )}
+        </div>
       </button>
       <div className="absolute right-1.5 top-1.5">
         <button
@@ -356,6 +409,7 @@ function ReviewListCard({
                   setMenuOpen(false);
                   setFront(item.card.front);
                   setBack(item.card.back ?? "");
+                  setLang(cardLang(item.card));
                   setEditing(true);
                 }}
                 className="block w-full px-3 py-1.5 text-left text-zinc-700 hover:bg-zinc-50"

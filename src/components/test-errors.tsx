@@ -5,9 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Play, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { detectLang, LANG_LABEL, LANG_COLOR, type Lang } from "@/lib/lang-detect";
+import { cardLang, LANG_LABEL, LANG_COLOR, type Lang } from "@/lib/lang-detect";
 import type { ReviewItem } from "@/lib/supabase/queries";
 import { ReviewSession } from "./review-session";
+import { CardFront } from "./card-front";
 import { SpeakButton } from "./speak-button";
 
 const LANG_ORDER: Lang[] = ["thai", "korean", "chinese", "japanese", "other"];
@@ -22,14 +23,14 @@ export function TestErrors({ items }: { items: ReviewItem[] }) {
 
   const presentLangs = (() => {
     const s = new Set<Lang>();
-    for (const i of items) s.add(detectLang(i.card.front));
+    for (const i of items) s.add(cardLang(i.card));
     return LANG_ORDER.filter((l) => s.has(l));
   })();
 
   const visible =
     lang === "all"
       ? items
-      : items.filter((i) => detectLang(i.card.front) === lang);
+      : items.filter((i) => cardLang(i.card) === lang);
 
   async function clearAll() {
     if (!window.confirm(`清空全部 ${items.length} 张错题卡？`)) return;
@@ -121,11 +122,11 @@ export function TestErrors({ items }: { items: ReviewItem[] }) {
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-zinc-900">
-                  {w.card.front}
+                  <CardFront text={w.card.front} reading={w.card.reading} />
                 </p>
                 <p className="truncate text-xs text-zinc-500">{w.card.back || ""}</p>
               </div>
-              <SpeakButton text={w.card.front} />
+              <SpeakButton text={w.card.front} lang={cardLang(w.card)} />
               <Link
                 href={`/cards/${w.card.id}?from=/review`}
                 className="shrink-0 text-sm text-zinc-400 transition-colors hover:text-zinc-700"

@@ -451,7 +451,10 @@ export function ShareModal({
                             fontFamily: FONT,
                           }}
                         >
-                          <div className="flex flex-1 flex-col p-8" style={{ gap: BLOCK_GAP }}>
+                          <div
+                            className={`flex flex-1 flex-col p-8 ${viewMode === "flat" ? "share-flat" : ""}`}
+                            style={{ gap: BLOCK_GAP }}
+                          >
                             {page.map((part, i) => (
                               <div
                                 key={i}
@@ -483,7 +486,10 @@ export function ShareModal({
           className="fixed -left-[9999px] top-0"
           style={{ width: PAGE_WIDTH - PAGE_PADDING * 2, fontFamily: FONT }}
         >
-          <div className="flex flex-col" style={{ gap: BLOCK_GAP }}>
+          <div
+            className={`flex flex-col ${viewMode === "flat" ? "share-flat" : ""}`}
+            style={{ gap: BLOCK_GAP }}
+          >
             {parts.map((part, i) => (
               <div key={i} style={{ overflow: "hidden" }}>
                 {renderPart(part)}

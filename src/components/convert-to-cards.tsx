@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CircleCheck, SkipForward } from "lucide-react";
+import { CircleCheck, SkipForward, Sparkles, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { parseNote, type CardSection } from "@/lib/parse-sections";
+import type { ParsedCard } from "@/lib/parse-cards";
+import { detectCardLang, LANG_LABEL, LANG_ORDER, type Lang } from "@/lib/lang-detect";
 import type { RecognitionRules } from "@/lib/types";
+import type { FuriganaSegment } from "@/lib/furigana";
 
 const KIND_LABEL: Record<CardSection["kind"], string> = {
   word: "生词",
@@ -15,12 +18,60 @@ const KIND_LABEL: Record<CardSection["kind"], string> = {
 
 const KIND_ORDER: CardSection["kind"][] = ["word", "example", "grammar"];
 
+/** 预览里的一张卡：正面 / 背面 + 自动判断的语言（可下拉修正）。 */
+type PreviewCard = { front: string; back: string; lang: Lang };
+type PreviewSection = { kind: CardSection["kind"]; title: string; cards: PreviewCard[] };
+
+/** 把识别出的卡打上语言（正面拿不稳就看背面，判不出归「其他」）。 */
+function withLang(items: ParsedCard[]): PreviewCard[] {
+  return items.map((c) => ({
+    front: c.front,
+    back: c.back,
+    lang: detectCardLang({ front: c.front, back: c.back }),
+  }));
+}
+
 /** 去重比较时，把正面里「（读音）」这类括号内容过滤掉，只看词本身是否相同（如「สวัสดี（sà-wàt-dii）」≈「สวัสดี」）。 */
 function normalizeFront(front: string): string {
   return front
     .replace(/[（(][^（）()]*[）)]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** 批量给日语汉字正面补读音（汉字上方假名）：只处理含汉字的日语新卡，
+ *  把该组正面用 \n 拼成一次请求，再按 \n 分段切回每张，写入 reading。
+ *  失败 / 数量对不上就静默跳过（reading 留空，卡片只显示纯汉字，不影响入库）。 */
+async function fillReadings(rows: { lang: Lang; front: string; reading?: string | null }[]) {
+  const targets = rows.filter((r) => r.lang === "japanese" && /[一-鿿]/.test(r.front));
+  if (targets.length === 0) return;
+  try {
+    const res = await fetch("/api/ai/furigana", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: targets.map((t) => t.front).join("\n") }),
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { segments?: FuriganaSegment[] };
+    if (!Array.isArray(data.segments)) return;
+    const groups: FuriganaSegment[][] = [];
+    let buf: FuriganaSegment[] = [];
+    for (const seg of data.segments) {
+      if (seg.text === "\n") {
+        groups.push(buf);
+        buf = [];
+      } else {
+        buf.push(seg);
+      }
+    }
+    if (buf.length > 0) groups.push(buf);
+    if (groups.length !== targets.length) return;
+    targets.forEach((t, i) => {
+      t.reading = JSON.stringify(groups[i]);
+    });
+  } catch {
+    // 接口失败 / 网络异常都静默跳过，不阻断入库。
+  }
 }
 
 /**
@@ -40,7 +91,7 @@ export function ConvertToCards({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const [sections, setSections] = useState<CardSection[]>([]);
+  const [sections, setSections] = useState<PreviewSection[]>([]);
   const [existingFronts, setExistingFronts] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +100,32 @@ export function ConvertToCards({
   const [selectedKinds, setSelectedKinds] = useState<Set<CardSection["kind"]>>(
     () => new Set(KIND_ORDER)
   );
+  // 批量改语言下拉：整批统一设成某一种（通常整篇同一个语言），选「自动」则逐张按内容重判。
+  const [batchLang, setBatchLang] = useState<string>("");
+  // 「AI 补全」：逐张把新卡背面丰富成更完整解释（覆盖原释义，不限背面是否为空）。
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiFilled, setAiFilled] = useState<Set<string>>(new Set());
+
+  function applyBatchLang(v: string) {
+    setBatchLang(v);
+    if (v === "auto") {
+      setSections((prev) =>
+        prev.map((s) => ({
+          ...s,
+          cards: s.cards.map((c) => ({
+            ...c,
+            lang: detectCardLang({ front: c.front, back: c.back }),
+          })),
+        }))
+      );
+    } else if (v) {
+      const l = v as Lang;
+      setSections((prev) =>
+        prev.map((s) => ({ ...s, cards: s.cards.map((c) => ({ ...c, lang: l })) }))
+      );
+    }
+  }
 
   // 打开时拉取这篇笔记已有的卡片正面，用于去重。
   useEffect(() => {
@@ -82,24 +159,32 @@ export function ConvertToCards({
       const rules = (data?.recognition_rules ?? null) as RecognitionRules | null;
       const { sections: secs, rest } = parseNote(text, rules);
 
+      // 每张卡先自动判断语言（存进预览，用户可下拉修正）。
+      const preview: PreviewSection[] = secs.map((s) => ({ ...s, cards: withLang(s.cards) }));
+
       // 勾了「只在 callout 内识别」：只收 callout；否则把 callout 之外的表格/词表也并入「生词」。
       // 若自定义分隔规则给某张卡标了类型（例句/语法），按类型归到对应分组，而不是一律塞进「生词」。
       if (!rules?.calloutOnly && rest.length > 0) {
         for (const c of rest) {
           const kind: CardSection["kind"] = c.kind ?? "word";
-          const target = secs.find((s) => s.kind === kind);
-          if (target) target.cards.push(c);
-          else secs.push({ kind, title: KIND_LABEL[kind], cards: [c] });
+          const target = preview.find((s) => s.kind === kind);
+          const card = {
+            front: c.front,
+            back: c.back,
+            lang: detectCardLang({ front: c.front, back: c.back }),
+          };
+          if (target) target.cards.push(card);
+          else preview.push({ kind, title: KIND_LABEL[kind], cards: [card] });
         }
       }
-      setSections(secs);
+      setSections(preview);
     })();
     return () => {
       cancelled = true;
     };
   }, [text]);
 
-  function updateCard(si: number, ci: number, field: "front" | "back", value: string) {
+  function updateCard(si: number, ci: number, field: "front" | "back" | "lang", value: string) {
     setSections((prev) =>
       prev.map((s, idx) =>
         idx === si
@@ -143,6 +228,8 @@ export function ConvertToCards({
       front: string;
       back: string;
       kind: CardSection["kind"];
+      lang: Lang;
+      reading?: string | null;
       position: number;
     }[] = [];
     let pos = 0;
@@ -154,31 +241,84 @@ export function ConvertToCards({
           front: c.front.trim(),
           back: c.back.trim(),
           kind: s.kind,
+          lang: c.lang,
+          reading: null,
           position: pos++,
         });
       }
     }
 
     if (rows.length === 0) {
-      setError(dupCount > 0 ? "没有新的卡片可入库（都已存在）。" : "没有可入库的卡片。");
+      setError(dupCount > 0 ? "没有新的闪卡可入库（都已存在）。" : "没有可入库的闪卡。");
       return;
     }
+    // 必须先禁用按钮（saving=true），再走网络：fillReadings 要请求读音接口，可能卡好几秒；
+    // 若这时按钮还开着，用户很容易点两次 → 同一张卡入库两次重复。
+    if (saving) return;
     setSaving(true);
     setError(null);
-    const { error } = await supabase.from("cards").insert(rows);
-    setSaving(false);
-    if (error) {
-      setError(error.message);
-      return;
+    try {
+      await fillReadings(rows);
+      const { error } = await supabase.from("cards").insert(rows);
+      if (error) {
+        setError(error.message);
+        return;
+      }
+      setDone(true);
+      router.refresh();
+    } finally {
+      setSaving(false);
     }
-    setDone(true);
-    router.refresh();
+  }
+
+  // 「AI 补全」：逐张调 /api/ai/card-explain，把背面丰富成更完整解释并覆盖（不限背面是否为空）。
+  async function fillAll() {
+    if (aiBusy) return;
+    setAiBusy(true);
+    setAiError(null);
+    setAiFilled(new Set());
+    const targets: { si: number; ci: number; front: string; back: string; kind: string }[] = [];
+    for (let si = 0; si < sections.length; si++) {
+      const s = sections[si];
+      for (let ci = 0; ci < s.cards.length; ci++) {
+        const c = s.cards[ci];
+        if (!c.front.trim() || existingFronts.has(normalizeFront(c.front))) continue;
+        targets.push({ si, ci, front: c.front, back: c.back, kind: s.kind });
+      }
+    }
+    for (const t of targets) {
+      try {
+        const res = await fetch("/api/ai/card-explain", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ front: t.front, back: t.back, kind: t.kind }),
+          signal: AbortSignal.timeout(60_000),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setAiError(data?.error ?? "补全失败");
+          break;
+        }
+        const explanation = String(data?.explanation ?? "").trim();
+        if (!explanation) continue;
+        updateCard(t.si, t.ci, "back", explanation);
+        setAiFilled((prev) => {
+          const next = new Set(prev);
+          next.add(t.front);
+          return next;
+        });
+      } catch (e) {
+        setAiError(e instanceof Error ? e.message : String(e));
+        break;
+      }
+    }
+    setAiBusy(false);
   }
 
   const summary =
     allCards.length > 0
       ? `识别出 ${allCards.length} 张${dupCount > 0 ? `，跳过重复 ${dupCount} 张` : ""}`
-      : "没识别出卡片";
+      : "没识别出闪卡";
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4">
@@ -201,7 +341,7 @@ export function ConvertToCards({
           <div className="px-4 py-10 text-center">
             <CircleCheck className="mx-auto h-10 w-10 text-teal-500" />
             <p className="mt-3 text-sm text-zinc-700">
-              已生成新卡片。去「卡片」页或这篇笔记的闪卡里看看。
+              已生成新卡片。去「闪卡」页或这篇笔记的闪卡里看看。
             </p>
             <button
               onClick={onClose}
@@ -245,6 +385,42 @@ export function ConvertToCards({
                   </button>
                 );
               })}
+            </div>
+
+            {/* 批量改语言：通常整篇同一个语言，先一键设为该语言，再逐张微调 */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 px-4 py-2.5">
+              <span className="text-xs text-zinc-400">语言：</span>
+              <select
+                value={batchLang}
+                onChange={(e) => applyBatchLang(e.target.value)}
+                className="rounded-lg border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-600 focus:border-teal-500 focus:outline-none"
+              >
+                <option value="">选择批量语言…</option>
+                <option value="auto">按内容自动判断（逐张）</option>
+                {LANG_ORDER.map((l) => (
+                  <option key={l} value={l}>
+                    {LANG_LABEL[l]}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-zinc-400">整批设为同一种语言，再逐张微调。</span>
+            </div>
+
+            {/* AI 补全：把每张新卡背面丰富成更完整解释（覆盖原释义，不限背面是否为空） */}
+            <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-2">
+              <button
+                onClick={() => void fillAll()}
+                disabled={aiBusy || newCount <= 0}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 px-3 py-1.5 text-xs font-medium text-teal-700 transition-colors hover:bg-teal-50 disabled:opacity-50"
+              >
+                {aiBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                AI 补全
+              </button>
+              {aiBusy && <span className="text-xs text-zinc-400">逐张补全中…</span>}
+              {!aiBusy && aiFilled.size > 0 && (
+                <span className="text-xs text-teal-600">已补全 {aiFilled.size} 张</span>
+              )}
+              {aiError && <span className="text-xs text-red-600">{aiError}</span>}
             </div>
 
             {/* 卡片预览（按生词/例句/语法分组，已存在的正面不再逐张展示） */}
@@ -294,6 +470,8 @@ export function ConvertToCards({
                                 key={ci}
                                 front={c.front}
                                 back={c.back}
+                                lang={c.lang}
+                                ai={aiFilled.has(c.front)}
                                 onChange={(field, value) => updateCard(si, ci, field, value)}
                                 onRemove={() => removeCard(si, ci)}
                               />
@@ -334,29 +512,53 @@ export function ConvertToCards({
 function CardDraft({
   front,
   back,
+  lang,
+  ai,
   onChange,
   onRemove,
 }: {
   front: string;
   back: string;
-  onChange: (field: "front" | "back", value: string) => void;
+  lang: Lang;
+  ai?: boolean;
+  onChange: (field: "front" | "back" | "lang", value: string) => void;
   onRemove: () => void;
 }) {
   return (
     <div className="space-y-2 rounded-xl border border-zinc-200 bg-white p-3">
-      <input
-        value={front}
-        onChange={(e) => onChange("front", e.target.value)}
-        placeholder="正面（要记的词）"
-        className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-900 focus:border-teal-500 focus:outline-none"
-      />
-      <textarea
-        value={back}
-        onChange={(e) => onChange("back", e.target.value)}
-        placeholder="背面（释义 / 读音，可换行加例句）"
-        rows={2}
-        className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-600 focus:border-teal-500 focus:outline-none"
-      />
+      <div className="flex items-center gap-1.5">
+        <input
+          value={front}
+          onChange={(e) => onChange("front", e.target.value)}
+          placeholder="正面（要记的词）"
+          className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-900 focus:border-teal-500 focus:outline-none"
+        />
+        {ai && (
+          <span className="shrink-0 rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-600">
+            AI
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <select
+          value={lang}
+          onChange={(e) => onChange("lang", e.target.value)}
+          className="rounded-lg border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-600 focus:border-teal-500 focus:outline-none"
+        >
+          {LANG_ORDER.map((l) => (
+            <option key={l} value={l}>
+              {LANG_LABEL[l]}
+            </option>
+          ))}
+        </select>
+        <textarea
+          value={back}
+          onChange={(e) => onChange("back", e.target.value)}
+          placeholder="背面（释义 / 读音，可换行加例句）"
+          rows={2}
+          className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-600 focus:border-teal-500 focus:outline-none"
+        />
+      </div>
       <button onClick={onRemove} className="text-xs text-zinc-400 hover:text-red-600">
         删除这一张
       </button>

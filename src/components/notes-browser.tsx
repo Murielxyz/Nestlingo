@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Search, FolderPlus, Folder, FileText } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, detachMaterialsFromNote } from "@/lib/supabase/client";
+import { flattenFolderTree } from "@/lib/folders";
 import { NewNoteButton } from "./new-note-button";
 import { EmptyState } from "./empty-state";
 import type { Folder as FolderType, Note } from "@/lib/types";
@@ -27,6 +28,7 @@ export function NotesBrowser({
   const [query, setQuery] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [folderName, setFolderName] = useState("");
+  const [newFolderParentId, setNewFolderParentId] = useState<string | null>(null);
   const [menuFolderId, setMenuFolderId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
@@ -52,9 +54,13 @@ export function NotesBrowser({
   // 点文件夹进它的笔记列表，点笔记进正文。
   const allNotes = notes.filter(matches);
   const unfiledNotes = notes.filter((n) => !n.folder_id && matches(n));
-  const visibleFolders = folders.filter(
-    (f) => !q || f.name.toLowerCase().includes(q)
-  );
+  const flatFolders = useMemo(() => flattenFolderTree(folders), [folders]);
+  // 搜索时平铺显示命中的文件夹名（不保留层级缩进）；无搜索时显示完整缩进树。
+  const visibleFlatFolders = q
+    ? flatFolders
+        .filter(({ folder }) => folder.name.toLowerCase().includes(q))
+        .map(({ folder }) => ({ folder, depth: 0 }))
+    : flatFolders;
 
   async function createFolder() {
     const name = folderName.trim();
@@ -62,7 +68,9 @@ export function NotesBrowser({
     setBusy(true);
     setError(null);
     const supabase = createClient();
-    const { error } = await supabase.from("folders").insert({ name });
+    const { error } = await supabase
+      .from("folders")
+      .insert({ name, parent_id: newFolderParentId });
     setBusy(false);
     if (error) {
       setError(error.message);
@@ -70,6 +78,7 @@ export function NotesBrowser({
     }
     setFolderName("");
     setShowNewFolder(false);
+    setNewFolderParentId(null);
     router.refresh();
   }
 
@@ -91,7 +100,7 @@ export function NotesBrowser({
   async function removeFolder(folder: FolderType) {
     if (
       !window.confirm(
-        `删除文件夹「${folder.name}」？里面的笔记会保留，变成无文件夹。`
+        `删除文件夹「${folder.name}」？它的子文件夹会一起删除，里面的笔记都会保留（变成无文件夹）。`
       )
     ) {
       return;
@@ -133,7 +142,10 @@ export function NotesBrowser({
         </div>
         <NewNoteButton />
         <button
-          onClick={() => setShowNewFolder((v) => !v)}
+          onClick={() => {
+            setNewFolderParentId(null);
+            setShowNewFolder((v) => !v);
+          }}
           title="新建文件夹"
           aria-label="新建文件夹"
           className="rounded-lg border border-zinc-200 px-2.5 py-2 text-zinc-600 transition-colors hover:bg-zinc-50"
@@ -153,7 +165,7 @@ export function NotesBrowser({
           <input
             value={folderName}
             onChange={(e) => setFolderName(e.target.value)}
-            placeholder="新文件夹名"
+            placeholder={newFolderParentId ? "子文件夹名" : "新文件夹名"}
             autoFocus
             className="flex-1 rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none"
           />
@@ -216,16 +228,17 @@ export function NotesBrowser({
             )
           ) : (
             <>
-              {/* 文件夹（平铺，点击进入它的笔记列表） */}
-              {visibleFolders.length > 0 && (
+              {/* 文件夹（缩进树，点击进入它的笔记列表） */}
+              {visibleFlatFolders.length > 0 && (
                 <p className="px-1 pt-1 text-xs font-medium text-zinc-400">文件夹</p>
               )}
-          {visibleFolders.map((folder) => {
+          {visibleFlatFolders.map(({ folder, depth }) => {
             const count = noteCountByFolder.get(folder.id) ?? 0;
             if (editingId === folder.id) {
               return (
                 <div
                   key={folder.id}
+                  style={{ marginLeft: depth * 16 }}
                   className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2"
                 >
                   <Folder className="h-4 w-4 shrink-0 text-zinc-400" />
@@ -257,6 +270,7 @@ export function NotesBrowser({
             return (
               <div
                 key={folder.id}
+                style={{ marginLeft: depth * 16 }}
                 className="flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white transition-colors hover:border-teal-300"
               >
                 <Link
@@ -287,7 +301,17 @@ export function NotesBrowser({
                         className="fixed inset-0 z-30"
                         onClick={() => setMenuFolderId(null)}
                       />
-                      <div className="absolute right-0 z-40 mt-1 w-28 rounded-xl border border-zinc-200 bg-white p-1 shadow-lg">
+                      <div className="absolute right-0 z-40 mt-1 w-32 rounded-xl border border-zinc-200 bg-white p-1 shadow-lg">
+                        <button
+                          onClick={() => {
+                            setNewFolderParentId(folder.id);
+                            setShowNewFolder(true);
+                            setMenuFolderId(null);
+                          }}
+                          className="flex w-full rounded-lg px-2.5 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100"
+                        >
+                          新建子文件夹
+                        </button>
                         <button
                           onClick={() => {
                             setEditingId(folder.id);
@@ -346,20 +370,38 @@ export function NoteList({
   showFolder?: boolean;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [menuNoteId, setMenuNoteId] = useState<string | null>(null);
   const [movingNoteId, setMovingNoteId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const flatFolders = useMemo(() => flattenFolderTree(folders), [folders]);
+
+  // 当前打开的笔记 id（仅 /notes/[id]，列表页 / 文件夹页 / 子页都不算），用于高亮「正在看的这篇」。
+  const activeNoteId = useMemo(() => {
+    if (!pathname) return null;
+    const parts = pathname.split("/");
+    if (parts.length === 3 && parts[1] === "notes" && parts[2] !== "folder") {
+      return parts[2];
+    }
+    return null;
+  }, [pathname]);
 
   async function removeNote(note: Note) {
     if (!window.confirm(`删除笔记「${note.title}」？里面的闪卡也会一起删除。`)) {
       return;
     }
     const supabase = createClient();
+    const { error: detachError } = await detachMaterialsFromNote(note.id);
+    if (detachError) return;
     const { error } = await supabase.from("notes").delete().eq("id", note.id);
     if (error) return;
     setMenuNoteId(null);
-    router.refresh();
+    // 桌面端边栏里删笔记时，当前路由仍是这条笔记自己的 /notes/{id}——
+    // router.refresh() 会重拉这条已删笔记 → getNote null → notFound → 404。
+    // 若正停在它的页面就跳回「笔记」首页（空态 + 列表刷新），否则（已在 /notes）原地刷新列表即可。
+    if (pathname === `/notes/${note.id}`) router.replace("/notes");
+    else router.refresh();
   }
 
   async function moveNote(note: Note, folderId: string | null) {
@@ -415,9 +457,19 @@ export function NoteList({
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white transition-colors hover:border-teal-300">
+            <div
+              className={`flex items-center gap-0.5 rounded-lg border bg-white transition-colors ${
+                note.id === activeNoteId
+                  ? "border-teal-300 bg-teal-50"
+                  : "border-zinc-200 hover:border-teal-300"
+              }`}
+            >
               <Link href={`/notes/${note.id}`} className="min-w-0 flex-1 px-3 py-2">
-                <p className="truncate text-sm font-medium text-zinc-800">
+                <p
+                  className={`truncate text-sm font-medium ${
+                    note.id === activeNoteId ? "text-teal-700" : "text-zinc-800"
+                  }`}
+                >
                   <Highlight text={note.title} q={query} />
                 </p>
                 {showFolder && note.folder_id && (
@@ -468,15 +520,17 @@ export function NoteList({
                         >
                           无文件夹
                         </button>
-                        {folders.map((f) => (
+                        {flatFolders.map(({ folder: f, depth }) => (
                           <button
                             key={f.id}
                             onClick={() => moveNote(note, f.id)}
-                            className={`flex w-full rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-zinc-100 ${
+                            style={{ paddingLeft: 8 + depth * 14 }}
+                            className={`flex w-full items-center gap-1.5 rounded-lg py-1.5 pr-2.5 text-left text-sm hover:bg-zinc-100 ${
                               note.folder_id === f.id ? "text-teal-600" : "text-zinc-700"
                             }`}
                           >
-                            {f.name}
+                            <Folder className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                            <span className="truncate">{f.name}</span>
                           </button>
                         ))}
                       </div>

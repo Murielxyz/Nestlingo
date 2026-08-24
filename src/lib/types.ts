@@ -31,6 +31,8 @@ export type Card = {
   tags: string[] | null;
   kind: string | null; // 'word' 生词 / 'example' 例句 / null 普通
   theme: string | null; // AI 智能整理归到的场景主题 key（如 "food"）；null 表示还没整理过
+  lang: string | null; // 卡片语言（thai/korean/chinese/japanese/other）；转卡时自动判断，可手动改
+  reading: string | null; // 日语生词读音（JSON 字符串存 text+reading 分段）；背诵/卡片在汉字上方标假名
   position: number;
   created_at: string;
   updated_at: string;
@@ -62,6 +64,10 @@ export type UserSettings = {
   recognition_rules: RecognitionRules | null;
   /** 用户隐藏（删除）的内置词群主题 key（如 "food"），这些主题不再出现在词群页。 */
   hidden_themes: string[];
+  /** AI 模型选择（每任务一个）：null=用环境默认。text='claude'|'deepseek'，speech='groq'|'openai'，vision='claude'|'openai'。 */
+  ai_text_provider: string | null;
+  ai_speech_provider: string | null;
+  ai_vision_provider: string | null;
 };
 
 /** 一条自定义分隔规则：命中即按指定方式把一行拆成「正面 / 背面」。 */
@@ -104,6 +110,83 @@ export type WordTheme = {
   name: string;
   keywords: string[];
   created_at: string;
+};
+
+/** 素材库素材的一条状态：待处理 / 已导入。 */
+export type MaterialStatus = "pending" | "imported";
+
+/** 素材类型：可内嵌的媒体（youtube/audio/spotify）+ 链接/播客 + 文件/AI 生成。 */
+export type MaterialType =
+  | "youtube"
+  | "audio"
+  | "spotify"
+  | "link"
+  | "podcast"
+  | "file"
+  | "generated";
+
+/** 素材类型的中文标签（筛选 chips / 徽章 / 预览提示共用）。 */
+export const MATERIAL_TYPE_LABEL: Record<MaterialType, string> = {
+  youtube: "视频",
+  audio: "音频",
+  spotify: "音乐",
+  link: "文章",
+  podcast: "播客",
+  file: "文件",
+  generated: "AI",
+};
+
+/** 用户自建素材合集（照 WordTheme：无 updated_at）。带可选的语言/类型定义标签（不设则按素材兜底）。 */
+export type MaterialCollection = {
+  id: string;
+  user_id: string;
+  name: string;
+  /** 合集定义的语言标签（如 "japanese"）；null = 未设置，筛选时按里面素材的语言兜底。 */
+  lang: string | null;
+  /** 合集定义的类型标签（如 "youtube"/"podcast"）；null = 未设置，按素材类型兜底。 */
+  type: MaterialType | null;
+  created_at: string;
+};
+
+/** 一条素材（照 Card：带 updated_at）。 */
+export type Material = {
+  id: string;
+  url: string;
+  type: MaterialType;
+  title: string;
+  source: string | null;
+  thumbnail: string | null;
+  lang: string | null;
+  status: MaterialStatus;
+  note_id: string | null;
+  collection_id: string | null;
+  /** AI 生成 / 网页文章提取的正文原文（转成笔记时用；普通素材为 null）。 */
+  content: string | null;
+  /** 上传文件素材的子类：audio / image / doc。 */
+  file_kind: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** 带所属笔记标题的素材（素材库列表用，照 CardWithNote）。 */
+export type MaterialWithNote = Material & { note_title: string | null };
+
+/** 一篇笔记「来自」的素材（反向：materials.note_id → 该笔记）。用于笔记页回标来源；一篇笔记可导入多条素材。 */
+export type SourceMaterial = {
+  id: string;
+  title: string | null;
+  url: string;
+};
+
+/** 导入到笔记时的附加载荷：把素材的哪一部分作为笔记内容写入。
+ *  - articleText：AI 生成 / 网页文章抽出的正文 → 包成「原文」callout 写入（可被 AI 精读、转卡时跳过）。
+ *  - audioUrl/audioTitle：播客选定某集后，用该集的音频直链内嵌（覆盖素材自身的 url/type）。
+ *  - title：新建笔记时用这个标题（缺省用素材标题，如文章提取出的页面标题）。 */
+export type MaterialImportExtra = {
+  articleText?: string;
+  title?: string;
+  audioUrl?: string;
+  audioTitle?: string;
 };
 
 /** 复习状态（每张卡一条，SM-2 间隔重复）。 */

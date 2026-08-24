@@ -67,6 +67,21 @@ export function parseMediaUrl(raw: string): ParsedMedia | null {
   return null;
 }
 
+// 匹配 YouTube 直链/短链里的合辑（playlist）参数：youtube.com/playlist?list=ID，
+// 以及 watch?v=..&list=ID / youtu.be/..?list=ID 这类「带合辑上下文的单集链接」。
+const YT_PLAYLIST_RE = /(?:youtube\.com|youtu\.be)[^\s]*[?&]list=([\w-]{10,})/i;
+
+/**
+ * 判断是不是 YouTube 合辑链接，是则返回规范化的合辑地址。
+ * 合辑里的每一集解析出来都单独存成一条素材，归进同名的素材合集。
+ */
+export function parseYoutubePlaylist(raw: string): { id: string; url: string } | null {
+  const m = raw.trim().match(YT_PLAYLIST_RE);
+  if (!m) return null;
+  const id = m[1];
+  return { id, url: `https://www.youtube.com/playlist?list=${id}` };
+}
+
 /** 判断是不是播客 RSS / Atom 订阅链接（需要拉取解析后挑一集）。 */
 export function isRssUrl(raw: string): boolean {
   const url = raw.trim();

@@ -22,10 +22,15 @@ export const Furigana = Mark.create({
 
   renderHTML({ HTMLAttributes }) {
     const reading = (HTMLAttributes["data-rt"] as string) ?? "";
+    // 注意：ProseMirror 规定 renderHTML 里的内容占位符 0 必须是其父节点的唯一子节点，
+    // 所以不能写 ["ruby", attrs, 0, ["rt", ...]]（0 和 rt 并排会抛
+    // "Content hole must be the only child of its parent node"）。
+    // 把正文包一层 <span>，让 0 成为 span 的唯一子节点，<rt> 作为 ruby 的兄弟节点紧随其后，
+    // 浏览器仍会把 <rt> 渲染到正文上方。
     return [
       "ruby",
       mergeAttributes(HTMLAttributes, { class: "furigana" }),
-      0,
+      ["span", { class: "furigana-base" }, 0],
       ["rt", { class: "furigana-rt", contenteditable: "false" }, reading],
     ];
   },

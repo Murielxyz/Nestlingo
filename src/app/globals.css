@@ -10,6 +10,12 @@
   --paper: oklch(0.99 0.005 200);
   --table-border: oklch(0.88 0.01 200);
 
+  /* 页面背景：顶部两角淡绿径向渐变 + paper 底色（body 与吸顶标题栏共用，保证融合） */
+  --page-bg:
+    radial-gradient(1200px 600px at 100% -10%, var(--brand-soft-2), transparent 60%),
+    radial-gradient(1000px 500px at -10% 0%, var(--brand-soft), transparent 55%),
+    var(--paper);
+
   --background: var(--paper);
   --foreground: var(--ink);
 }
@@ -42,16 +48,55 @@
 }
 
 body {
-  background:
-    radial-gradient(1200px 600px at 100% -10%, var(--brand-soft-2), transparent 60%),
-    radial-gradient(1000px 500px at -10% 0%, var(--brand-soft), transparent 55%),
-    var(--paper);
+  background: var(--page-bg);
   background-attachment: fixed;
   color: var(--ink);
   font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont,
     "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
     "Noto Sans CJK SC", "Noto Sans Thai", "Apple SD Gothic Neo",
     "Malgun Gothic", sans-serif;
+}
+
+/* 防 iOS Safari 双击/捏合缩放：双击不放大、输入框聚焦不自动放大 */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+body {
+  touch-action: manipulation;
+}
+@media (max-width: 767px) {
+  /* iOS 输入框字号 < 16px 会触发聚焦自动放大，移动端统一提到 16px */
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* ===== 页面标题栏（移动端吸顶、背景与页面一致）：桌面端回到普通块 =====
+   只在 max-w-5xl px-4 py-6 容器内使用（负外边距抵消容器留白，让标题栏贴满整宽）。
+   下边距不在此设置，交由调用处的 mb-* 工具类，避免与 Tailwind 层叠优先级冲突。 */
+.page-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin-top: -1.5rem; /* 抵消 py-6 */
+  margin-left: -1rem;  /* 抵消 px-4 */
+  margin-right: -1rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  background: var(--page-bg);
+  background-attachment: fixed;
+  padding: calc(env(safe-area-inset-top) + 0.75rem) 1rem 0.75rem;
+}
+@media (min-width: 768px) {
+  .page-header {
+    position: static;
+    margin-top: 0;
+    margin-left: 0;
+    margin-right: 0;
+    border-bottom: none;
+    background: transparent;
+    padding: 0;
+  }
 }
 
 /* ===== 复用工具类（照搬 STYLE_GUIDE） ===== */
@@ -130,6 +175,16 @@ body {
 .tiptap u {
   text-decoration: underline;
 }
+/* 链接：粘贴 URL 回车后自动转成可点击链接 */
+.tiptap-link {
+  color: #0d9488; /* teal-600 */
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.tiptap-link:hover {
+  color: #0f766e; /* teal-700 */
+}
 /* 精读「原文」块里的中文翻译：淡灰小字，跟在每段原文下方 */
 .tiptap .translation {
   color: #a1a1aa;
@@ -142,6 +197,15 @@ body {
 }
 .tiptap ruby.furigana .furigana-rt,
 .share-content ruby.furigana .furigana-rt {
+  font-size: 0.62em;
+  color: #9ca3af;
+  line-height: 1;
+}
+/* 卡片正面（CardFront）：复习 / 卡片页 / 侧栏也在汉字上方标假名（不限于笔记内的 .tiptap） */
+ruby.furigana {
+  ruby-align: center;
+}
+ruby.furigana rt {
   font-size: 0.62em;
   color: #9ca3af;
   line-height: 1;
@@ -236,23 +300,28 @@ body {
   min-width: 0;
 }
 
-/* ===== callout（生词 = 天蓝 / 例句 = 草绿 / 语法 = 紫 区块，Notion 风彩色卡片） ===== */
+/* ===== callout（生词 = 奶油金 / 例句 = 鼠尾草绿 / 语法 = 薰衣草紫 / 原文 = 灰，奶油粉彩低饱和配色） ===== */
 .tiptap .callout {
   border-radius: 10px;
   padding: 0.45rem 0.75rem;
   margin: 0.75em 0;
 }
 .tiptap .callout[data-kind="word"] {
-  background: #f5faff;
-  border: 1px solid #dbeafe;
+  background: #fef8e4;
+  border: 1px solid #f2dfae;
 }
 .tiptap .callout[data-kind="example"] {
-  background: #f5fdf7;
-  border: 1px solid #dcfce7;
+  background: #f0f6ec;
+  border: 1px solid #d8e7d2;
 }
 .tiptap .callout[data-kind="grammar"] {
-  background: #fbf9fe;
-  border: 1px solid #ede9fe;
+  background: #dfdefe;
+  border: 1px solid #ccc8f2;
+}
+/* 原文：极淡浅灰底 + 细浅灰边，和纯白页面拉开一点点区别（不重，只做区分） */
+.tiptap .callout[data-kind="article"] {
+  background: #fafafa;
+  border: 1px solid #eeeeee;
 }
 .tiptap .callout-label {
   font-size: 0.85em;
@@ -261,8 +330,64 @@ body {
   color: #374151;
   user-select: none;
 }
+/* 标签按类型着色（对齐 KIND_META：生词金 / 例句绿 / 语法紫 / 原文灰） */
+.tiptap .callout[data-kind="word"] > .callout-label {
+  color: #9a7328;
+}
+.tiptap .callout[data-kind="example"] > .callout-label {
+  color: #2b795c;
+}
+.tiptap .callout[data-kind="grammar"] > .callout-label {
+  color: #5a4ac0;
+}
+.tiptap .callout[data-kind="article"] > .callout-label {
+  color: #a1a1aa;
+}
 .tiptap .callout-body > p {
   margin: 0.25em 0;
+}
+/* 「原文」callout 标签里的操作按钮（精读/翻译/加假名，callout-actions 插件注入的纯 DOM，只在编辑器里出现） */
+.tiptap .callout-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  font-weight: 400;
+}
+.tiptap .callout-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 5px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #9ca3af;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.tiptap .callout-actions button:hover {
+  color: #0d9488;
+  background: rgba(13, 148, 136, 0.08);
+}
+.tiptap .callout-actions .callout-action-ic {
+  font-size: 12px;
+  line-height: 1;
+  color: #c4c6cb;
+}
+/* 无假名（no-kana，由 callout-actions 装饰器实时加）：藏掉「加假名」按钮，粘贴日语后自动出现 */
+.tiptap .callout.no-kana .callout-action[data-callout-action="toggleFurigana"] {
+  display: none;
+}
+/* 已翻译（is-translated，含 translation mark）：给「翻译」按钮上已译色，提示已经点过 */
+.tiptap .callout.is-translated .callout-action[data-callout-action="translate"] {
+  color: #0d9488;
+  background: rgba(13, 148, 136, 0.1);
+}
+.tiptap .callout.is-translated .callout-action[data-callout-action="translate"] .callout-action-ic {
+  color: #0d9488;
 }
 
 /* ===== 分享图里的正文（跟编辑器同一套格式，颜色用 currentColor 跟随背景） ===== */
@@ -384,6 +509,11 @@ body {
 .share-content .callout-body > p {
   margin: 0.25em 0;
 }
+/* 「原文」标签里的操作按钮（翻译/精读笔记/加假名）由 renderHTML 一并输出，但只在编辑器里有用，分享图 / 阅读模式隐藏 */
+.share-content .callout-actions,
+.share-content .callout-action {
+  display: none;
+}
 
 /* 「笔记样式」分享视图：callout 按笔记内页配色渲染（浅色框 + 深色正文 + 彩色标签） */
 .share-content .callout[data-kind="word"],
@@ -393,25 +523,25 @@ body {
   opacity: 1;
 }
 .share-content .callout[data-kind="word"] {
-  background: #f5faff;
-  border: 1px solid #dbeafe;
+  background: #fef8e4;
+  border: 1px solid #f2dfae;
 }
 .share-content .callout[data-kind="word"] .callout-label {
-  color: #38bdf8;
+  color: #9a7328;
 }
 .share-content .callout[data-kind="example"] {
-  background: #f5fdf7;
-  border: 1px solid #dcfce7;
+  background: #f0f6ec;
+  border: 1px solid #d8e7d2;
 }
 .share-content .callout[data-kind="example"] .callout-label {
-  color: #4ade80;
+  color: #2b795c;
 }
 .share-content .callout[data-kind="grammar"] {
-  background: #fbf9fe;
-  border: 1px solid #ede9fe;
+  background: #dfdefe;
+  border: 1px solid #ccc8f2;
 }
 .share-content .callout[data-kind="grammar"] .callout-label {
-  color: #c084fc;
+  color: #5a4ac0;
 }
 .share-content .callout[data-kind="article"] {
   border: none;
@@ -420,6 +550,22 @@ body {
 }
 .share-content .callout[data-kind="article"] .callout-label {
   color: #9ca3af;
+}
+
+/* 按条切页（分享图）：每条更紧凑，行距收紧、不要分太开 */
+.share-flat .share-content {
+  line-height: 1.5;
+}
+.share-flat .share-content p {
+  margin: 0.18em 0;
+}
+.share-flat .share-content ul,
+.share-flat .share-content ol {
+  margin: 0.12em 0;
+  padding-left: 1.25em;
+}
+.share-flat .share-content li {
+  margin: 0.1em 0;
 }
 
 /* ===== 内嵌媒体（编辑器 + 分享图里的占位） ===== */

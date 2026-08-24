@@ -1,11 +1,13 @@
 // POST /api/rss —— 抓取播客 RSS/Atom 订阅，返回每集的标题 + 音频直链。
 // 客户端浏览器直接抓 RSS 会被 CORS 拦，所以放到服务端代理。
 // 用户粘贴订阅链接后，从这里拿到节目列表，挑一集再以内嵌音频节点插入笔记。
+// 输入不一定是 RSS 源：Apple Podcasts / Google 播客 / 播客主页链接会先解析成源地址再抓。
 
 import { NextResponse } from "next/server";
 import { XMLParser } from "fast-xml-parser";
 import { createClient } from "@/lib/supabase/server";
 import { serverFetch } from "@/lib/server-fetch";
+import { resolvePodcastFeed } from "@/lib/podcast-resolve";
 
 export const runtime = "nodejs";
 
@@ -54,6 +56,16 @@ function audioOf(it: XmlValue): string {
   return "";
 }
 
+/** 单集发布日期（毫秒时间戳，用于「最新在前」排序；取不到为 0 排到最后）。 */
+function episodeDate(it: XmlValue): number {
+  const raw = asString(it?.pubDate) || asString(it?.updated) || asString(it?.["dc:date"]) || "";
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? t : 0;
+}
+
+// 单集列表上限：只列最近这些集，避免一档几百集直接刷屏。
+const MAX_EPISODES = 30;
+
 export async function POST(req: Request) {
   const supabase = await createClient();
   const {
@@ -71,12 +83,23 @@ export async function POST(req: Request) {
   }
   const url = (body.url ?? "").trim();
   if (!url) {
-    return NextResponse.json({ error: "没有 RSS 链接" }, { status: 400 });
+    return NextResponse.json({ error: "没有链接" }, { status: 400 });
+  }
+
+  // 先把粘贴的链接解析成 RSS 源（兼容 Apple / Google / 播客主页 / 直接 RSS）。
+  let feedUrl: string;
+  try {
+    feedUrl = await resolvePodcastFeed(url);
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 400 }
+    );
   }
 
   let xml: string;
   try {
-    const res = await serverFetch(url, {
+    const res = await serverFetch(feedUrl, {
       headers: { "user-agent": "Mozilla/5.0 (compatible; Nestlingo)" },
       signal: AbortSignal.timeout(20_000),
     });
@@ -106,23 +129,31 @@ export async function POST(req: Request) {
     const rawItems: XmlValue = channel?.item ?? channel?.entry ?? [];
     const arr: XmlValue[] = Array.isArray(rawItems) ? rawItems : [rawItems];
 
-    const episodes = arr
+    // 每集带时间戳，最新的排最前；不过上限，避免一档几百集直接刷屏。
+    const withAudio = arr
       .map((it) => ({
         title: asString(it?.title).trim() || "未命名节目",
         audio: audioOf(it).trim(),
+        ts: episodeDate(it),
       }))
-      .filter((e) => e.audio);
+      .filter((e) => e.audio)
+      .sort((a, b) => b.ts - a.ts);
 
-    if (episodes.length === 0) {
+    if (withAudio.length === 0) {
       return NextResponse.json(
         { error: "这个订阅里没找到可播放的音频（可能不是播客源，或用的是不支持的格式）。" },
         { status: 400 }
       );
     }
 
+    const episodes = withAudio.slice(0, MAX_EPISODES).map(({ title, audio }) => ({ title, audio }));
+
     return NextResponse.json({
       title: asString(channel?.title).trim() || "播客",
       episodes,
+      // count / truncated 供 UI 显示「只取前 N 集（共 M 集）」。
+      count: withAudio.length,
+      truncated: withAudio.length > MAX_EPISODES,
     });
   } catch {
     return NextResponse.json(

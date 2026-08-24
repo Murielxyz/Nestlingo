@@ -11,6 +11,10 @@ export type MediaEmbedAttrs = {
   src: string;
   kind: "youtube" | "audio" | "spotify";
   title: string;
+  /** 封面图（音频/播客单集用）；无则播放器显示图标占位。 */
+  cover: string | null;
+  /** 原始链接（外链）；内置播放器用它给「打开原始 App / 原文」入口。 */
+  original: string | null;
 };
 
 /** 从 YouTube embed 链接里抠出视频 id（缩略图用）。 */
@@ -30,6 +34,8 @@ export const MediaEmbed = Node.create({
       src: { default: "" },
       kind: { default: "youtube" },
       title: { default: "" },
+      cover: { default: null },
+      original: { default: null },
     };
   },
 
@@ -41,6 +47,8 @@ export const MediaEmbed = Node.create({
           src: el.getAttribute("data-src") ?? "",
           kind: el.getAttribute("data-kind") ?? "youtube",
           title: el.getAttribute("data-title") ?? "",
+          cover: el.getAttribute("data-cover") || null,
+          original: el.getAttribute("data-original") || null,
         }),
       },
     ];
@@ -51,12 +59,14 @@ export const MediaEmbed = Node.create({
   },
 
   renderHTML({ node, HTMLAttributes }) {
-    const { src, kind, title } = node.attrs as MediaEmbedAttrs;
+    const { src, kind, title, cover, original } = node.attrs as MediaEmbedAttrs;
     const base = mergeAttributes(HTMLAttributes, {
       "data-media-embed": "true",
       "data-kind": kind,
       "data-src": src,
       "data-title": title,
+      "data-cover": cover ?? undefined,
+      "data-original": original ?? undefined,
     });
 
     if (kind === "youtube") {

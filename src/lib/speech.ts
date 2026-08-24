@@ -3,6 +3,9 @@
 // Google 翻译 TTS 更自然，尤其是韩语。这里统一用它；设备上没有好音色时再退回在线 TTS。
 import { speechLang, type Lang } from "./lang-detect";
 
+// iOS 会回收没被强引用的 SpeechSynthesisUtterance（长文本分段读会中途停），这里统一持住。
+let _heldUtterances: SpeechSynthesisUtterance[] = [];
+
 function getVoices(): SpeechSynthesisVoice[] {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) return [];
   const vs = window.speechSynthesis.getVoices();
@@ -20,12 +23,12 @@ export function isNaturalVoice(v: SpeechSynthesisVoice): boolean {
   );
 }
 
-/** 按语言挑一个更接近真人的系统音色；没有匹配返回 null。 */
-export function pickVoice(lang: Lang): SpeechSynthesisVoice | null {
-  const voices = getVoices();
-  if (!voices.length) return null;
+/** 按语言挑一个更接近真人的系统音色；没有匹配返回 null。可传已加载的 voices（避免重复 getVoices）。 */
+export function pickVoice(lang: Lang, voices?: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
+  const vs = voices && voices.length ? voices : getVoices();
+  if (!vs.length) return null;
   const target = speechLang(lang).slice(0, 2).toLowerCase();
-  const matches = voices.filter((v) =>
+  const matches = vs.filter((v) =>
     v.lang.toLowerCase().replace("_", "-").startsWith(target)
   );
   if (!matches.length) return null;
@@ -61,12 +64,14 @@ export function speakParagraph(
   const voice = pickVoice(l);
   window.speechSynthesis.cancel();
   const chunks = sentences.length ? sentences : [clean];
+  _heldUtterances = []; // 新的朗读开始，清掉旧引用
   chunks.forEach((s, i) => {
     const u = new SpeechSynthesisUtterance(s);
     u.lang = speechLang(l);
     if (voice) u.voice = voice;
     u.rate = 0.95;
     if (i === chunks.length - 1 && onEnd) u.onend = onEnd;
+    _heldUtterances.push(u); // 强引用防 iOS GC 中途停
     window.speechSynthesis.speak(u);
   });
   return () => window.speechSynthesis.cancel();

@@ -9,10 +9,11 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
-import type { Editor } from "@tiptap/core";
-import { AudioLines, Sparkles, Trash2, PictureInPicture2, Minus, X, ZoomIn, ZoomOut } from "lucide-react";
-import { analysisToNoteContent, transcriptCallout, type AiAnalysis } from "@/lib/ai-note";
+import { AudioLines, Trash2, PictureInPicture2, Minus, X, ZoomIn, ZoomOut } from "lucide-react";
+import { transcriptCallout } from "@/lib/ai-note";
 import type { MediaEmbedAttrs } from "@/lib/media-embed-extension";
+import { YTDLP_DISABLED } from "@/lib/feature-flags";
+import { PodcastAudioPlayer } from "./podcast-audio-player";
 
 /** 悬浮窗估算尺寸（初始定位 + 拖拽边界用）。 */
 const FLOAT_W = 340;
@@ -23,33 +24,10 @@ function spotifyHeight(src: string): number {
   return /\/(album|playlist)\//.test(src) ? 380 : 152;
 }
 
-/** 收集媒体节点之后、到下一个 分割线/标题/媒体/生词等 callout 为止的纯文本（AI 精读用）。 */
-function followingText(editor: Editor, from: number): { text: string; end: number } {
-  const doc = editor.state.doc;
-  let end = doc.content.size;
-  let stop = false;
-  doc.nodesBetween(from, end, (n, p) => {
-    if (stop) return false;
-    if (p <= from) return;
-    // 原文(article) callout 是要分析的文字稿本体，要读进去；生词/例句/语法 callout 说明已经分析过，到这就停。
-    if (
-      n.type.name === "horizontalRule" ||
-      n.type.name === "heading" ||
-      n.type.name === "mediaEmbed" ||
-      (n.type.name === "callout" && (n.attrs?.kind ?? "word") !== "article")
-    ) {
-      end = p;
-      stop = true;
-      return false;
-    }
-  });
-  return { text: doc.textBetween(from, end, "\n").trim(), end };
-}
-
 export function MediaEmbedNodeView(props: NodeViewProps) {
   const { node, editor, getPos, deleteNode } = props;
   const attrs = node.attrs as MediaEmbedAttrs;
-  const [busy, setBusy] = useState<"transcribe" | "analyze" | null>(null);
+  const [busy, setBusy] = useState<"transcribe" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [floating, setFloating] = useState(false);
   const [minimized, setMinimized] = useState(false);
@@ -64,6 +42,10 @@ export function MediaEmbedNodeView(props: NodeViewProps) {
 
   const pos = getPos() as number;
   const insertAfter = pos + node.nodeSize;
+
+  // YouTube 抓字幕 / 听声转录依赖本机 yt-dlp，部署到 Vercel 等环境时禁用；
+  // 音频直链转录（云 STT）不受影响，仍可点。
+  const transcribeDisabled = YTDLP_DISABLED && attrs.kind === "youtube";
 
   async function transcribe() {
     setBusy("transcribe");
@@ -101,37 +83,6 @@ export function MediaEmbedNodeView(props: NodeViewProps) {
     }
   }
 
-  async function analyze() {
-    const range = followingText(editor, insertAfter);
-    if (!range.text) {
-      setError("这个媒体下方还没有文字稿，请先生成文字稿或粘贴文字。");
-      return;
-    }
-    setBusy("analyze");
-    setError(null);
-    try {
-      const res = await fetch("/api/ai/analyze", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: range.text }),
-        signal: AbortSignal.timeout(120_000),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data?.error ?? "AI 分析失败");
-        return;
-      }
-      const analysis = data as AiAnalysis;
-      const content = analysisToNoteContent(analysis, range.text).content ?? [];
-      // 用「原文 + 解析」替换原始文字稿：原文自动包进只读区块（转成闪卡跳过），解析块跟在后面。
-      editor.chain().deleteRange({ from: insertAfter, to: range.end }).insertContentAt(insertAfter, content).run();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  }
-
   const title =
     attrs.title || (attrs.kind === "youtube" ? "视频" : attrs.kind === "spotify" ? "音乐" : "音频");
 
@@ -154,7 +105,7 @@ export function MediaEmbedNodeView(props: NodeViewProps) {
         allow="encrypted-media"
       />
     ) : (
-      <audio controls src={attrs.src} className="w-full" />
+      <PodcastAudioPlayer src={attrs.src} title={title} cover={attrs.cover} openHref={attrs.original} />
     );
 
   // 打开悬浮播放：首次给一个右下角的初始位置，之后记住用户拖到的位置。
@@ -230,22 +181,15 @@ export function MediaEmbedNodeView(props: NodeViewProps) {
           <button
             type="button"
             onClick={transcribe}
-            disabled={busy !== null}
-            className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50"
+            disabled={busy !== null || transcribeDisabled}
+            title={transcribeDisabled ? "此功能暂未启用" : undefined}
+            aria-disabled={transcribeDisabled}
+            className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <AudioLines className="h-3.5 w-3.5" />
             {busy === "transcribe" ? "转录中…" : "生成文字稿"}
           </button>
         )}
-        <button
-          type="button"
-          onClick={analyze}
-          disabled={busy !== null}
-          className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50"
-        >
-          <Sparkles className="h-3.5 w-3.5" />
-          {busy === "analyze" ? "分析中…" : "AI 精读"}
-        </button>
         <button
           type="button"
           onClick={() => deleteNode()}

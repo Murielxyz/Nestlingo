@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { NotebookPen, RefreshCw, Layers, Settings, Inbox } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -40,10 +40,30 @@ export function AppShell({
 
   // 单篇笔记页自带「返回 + 保存」头部，mobile 端不再叠一层全局顶栏（避免两个 sticky 头重叠）。
   const isNoteDetail = /^\/notes\/[^/]+$/.test(pathname) && pathname !== "/notes";
+  const searchParams = useSearchParams();
 
-  // 进入笔记区（自带文件夹/列表/内容三栏导航）时，一级导航自动收成窄条，把宽度让给笔记三栏；离开恢复展开。
+  // 复习/测试/完形填空等会话页（/review 带任意参数，如 ?mode=test、?note=…、?scope=weak、
+  // ?theme=…）：沉浸式专注背诵，移动端底部导航一并隐藏；复习主页（无参数）仍保留。
+  const isReviewSession = pathname === "/review" && searchParams.size > 0;
+
+  // 移动端带 sticky 标题栏的页面：标题吸顶且自带安全区 padding，main 不再叠顶部安全区留白，
+  // 否则标题上方会多一段透明空隙、滚动内容从那里渗入。
+  // 复习主页 + 会话子页（scope/mode/note/theme…）现在都吸顶，其余次级页（单卡/主题/素材/合集/设置/笔记闪卡）亦然。
+  const hasStickyHeader =
+    isNotes ||
+    pathname === "/review" ||
+    pathname === "/cards" ||
+    pathname.startsWith("/cards/") ||
+    pathname === "/materials" ||
+    pathname.startsWith("/materials/") ||
+    pathname === "/settings" ||
+    pathname.startsWith("/groups/") ||
+    /^\/notes\/[^/]+\/cards$/.test(pathname);
+
+  // 进入笔记区（自带文件夹/列表/内容三栏导航）时，一级导航自动收成窄条，把宽度让给笔记三栏；
+  // 离开后保持收起、不自动展开，由用户点侧栏「»」手动展开。
   useEffect(() => {
-    setCollapsed(isNotes);
+    if (isNotes) setCollapsed(true);
   }, [isNotes]);
 
   // 每日复习提醒：应用打开时，若到了设置的时间且已开启，弹一条系统通知（当天只弹一次）。
@@ -154,7 +174,7 @@ export function AppShell({
       </aside>
 
       {/* ===== 主内容区（移动端底部让出导航 + 底部安全区；顶部让出状态栏安全区） ===== */}
-      <main className={`transition-[padding] duration-200 ${collapsed ? "md:pl-14" : "md:pl-64"} ${isNoteDetail ? "" : "pt-[max(1rem,env(safe-area-inset-top))]"} ${isNoteDetail ? "pb-0" : "pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0"}`}>
+      <main className={`transition-[padding] duration-200 ${collapsed ? "md:pl-14" : "md:pl-64"} ${hasStickyHeader ? "" : "pt-[max(1rem,env(safe-area-inset-top))]"} ${isNoteDetail || isReviewSession ? "pb-0" : "pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0"}`}>
         {isNotes ? (
           <div className="min-h-screen bg-white">{children}</div>
         ) : (
@@ -164,7 +184,8 @@ export function AppShell({
 
       {/* ===== 移动端底部导航（底部放出安全区，避免被 home indicator 压住） ===== */}
       {/* 笔记编辑页顶部已有返回键，底部导航不显示，避免编辑时遮挡。 */}
-      {!isNoteDetail && (
+      {/* 复习/测试会话页同样隐藏，专注背诵。 */}
+      {!isNoteDetail && !isReviewSession && (
         <nav className="md:hidden fixed inset-x-0 bottom-0 z-10 flex border-t border-zinc-200 bg-white pb-[env(safe-area-inset-bottom)]">
           {NAV_ITEMS.map((item) => {
             const active = isActive(pathname, item.href);

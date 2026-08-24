@@ -2,23 +2,23 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { SquareCheckBig, Pencil, Trash2, Search } from "lucide-react";
+import { SquareCheckBig, Search } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { detectCardLang } from "@/lib/lang-detect";
 import type { Card } from "@/lib/types";
-import { detectLang, LANG_LABEL, LANG_COLOR } from "@/lib/lang-detect";
-import { SpeakButton } from "./speak-button";
+import { CardTile } from "./card-tile";
 
 /**
- * 一组卡片。
+ * 一组卡片（按来源展开后的卡片列表 / 独立卡片块）。
  * 默认只显示干净的翻面卡片（点一下翻面记忆）。
  * 点「☑ 选择」进入选择模式：勾选多张批量删除，或 ✏️ 单张编辑。
  * 传 noteId 时多一个「＋ 添加」手动加卡。卡片内容独立保存，与笔记不联动。
+ * 单张的翻面 / 编辑 / 「✨ AI 解释」统一走 CardTile（与按主题视图完全一致）。
  */
 export function NoteCards({ cards, noteId }: { cards: Card[]; noteId?: string }) {
   const router = useRouter();
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [newFront, setNewFront] = useState("");
   const [newBack, setNewBack] = useState("");
@@ -44,7 +44,12 @@ export function NoteCards({ cards, noteId }: { cards: Card[]; noteId?: string })
     const supabase = createClient();
     const { error } = await supabase
       .from("cards")
-      .insert({ note_id: noteId ?? null, front: newFront.trim(), back: newBack.trim() });
+      .insert({
+        note_id: noteId ?? null,
+        front: newFront.trim(),
+        back: newBack.trim(),
+        lang: detectCardLang({ front: newFront.trim(), back: newBack.trim() }),
+      });
     setBusy(false);
     if (error) return;
     setNewFront("");
@@ -63,19 +68,21 @@ export function NoteCards({ cards, noteId }: { cards: Card[]; noteId?: string })
   }
 
   function toggleAll() {
-    setSelected((prev) =>
+    setSelected(() =>
       allVisibleSelected ? new Set() : new Set(visible.map((c) => c.id))
     );
   }
 
   async function deleteSelected() {
-    if (selected.size === 0) return;
-    if (!window.confirm(`删除选中的 ${selected.size} 张卡片？`)) return;
+    // 只删「当前可见 ∧ 选中」的卡：搜索会把部分卡藏起来，不能顺手删掉看不到的。
+    const toDelete = visible.filter((c) => selected.has(c.id)).map((c) => c.id);
+    if (toDelete.length === 0) return;
+    if (!window.confirm(`删除选中的 ${toDelete.length} 张闪卡？`)) return;
     const supabase = createClient();
     const { error } = await supabase
       .from("cards")
       .delete()
-      .in("id", Array.from(selected));
+      .in("id", toDelete);
     if (error) return;
     setSelected(new Set());
     setSelecting(false);
@@ -108,7 +115,7 @@ export function NoteCards({ cards, noteId }: { cards: Card[]; noteId?: string })
           </button>
         )}
 
-        {selecting ? (
+        {selecting && (
           <>
             <button
               onClick={toggleAll}
@@ -124,25 +131,28 @@ export function NoteCards({ cards, noteId }: { cards: Card[]; noteId?: string })
             >
               删除
             </button>
-            <button
-              onClick={() => {
-                setSelecting(false);
-                setSelected(new Set());
-              }}
-              className="ml-auto rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-700"
-            >
-              完成
-            </button>
           </>
-        ) : (
-          <button
-            onClick={() => setSelecting(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm text-zinc-600 transition-colors hover:bg-zinc-50"
-          >
-            <SquareCheckBig className="h-4 w-4" />
-            选择
-          </button>
         )}
+        <button
+          onClick={() => {
+            if (selecting) setSelected(new Set());
+            setSelecting((v) => !v);
+          }}
+          className={`ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors ${
+            selecting
+              ? "bg-teal-600 font-semibold text-white hover:bg-teal-700"
+              : "border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+          }`}
+        >
+          {selecting ? (
+            "完成"
+          ) : (
+            <>
+              <SquareCheckBig className="h-4 w-4" />
+              选择
+            </>
+          )}
+        </button>
       </div>
 
       {/* 添加表单 */}
@@ -180,217 +190,26 @@ export function NoteCards({ cards, noteId }: { cards: Card[]; noteId?: string })
               点上方「＋ 添加」手动加，或回到笔记点「⋯ → 转成闪卡」。
             </>
           ) : (
-            <> 去卡片页点「＋ 添加闪卡」生成。</>
+            <> 去闪卡页点「＋ 添加闪卡」生成。</>
           )}
         </div>
       ) : visible.length === 0 ? (
         <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-500">
-          没有匹配「{query.trim()}」的卡片。
+          没有匹配「{query.trim()}」的闪卡。
         </div>
       ) : (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {visible.map((card) => (
             <li key={card.id}>
-              <CardItem
+              <CardTile
                 card={card}
                 selecting={selecting}
                 checked={selected.has(card.id)}
-                editing={editingId === card.id}
                 onToggleSelect={() => toggleSelect(card.id)}
-                onStartEdit={() => setEditingId(card.id)}
-                onCancelEdit={() => setEditingId(null)}
               />
             </li>
           ))}
         </ul>
-      )}
-    </div>
-  );
-}
-
-function CardItem({
-  card,
-  selecting,
-  checked,
-  editing,
-  onToggleSelect,
-  onStartEdit,
-  onCancelEdit,
-}: {
-  card: Card;
-  selecting: boolean;
-  checked: boolean;
-  editing: boolean;
-  onToggleSelect: () => void;
-  onStartEdit: () => void;
-  onCancelEdit: () => void;
-}) {
-  const router = useRouter();
-  const [flipped, setFlipped] = useState(false);
-  const [front, setFront] = useState(card.front);
-  const [back, setBack] = useState(card.back ?? "");
-  const [menuOpen, setMenuOpen] = useState(false);
-  const lang = detectLang(card.front);
-
-  async function saveEdit() {
-    const supabase = createClient();
-    const { error } = await supabase
-      .from("cards")
-      .update({ front: front.trim(), back: back.trim() })
-      .eq("id", card.id);
-    if (!error) {
-      onCancelEdit();
-      router.refresh();
-    }
-  }
-
-  async function deleteCard() {
-    if (!window.confirm("删除这张卡片？")) return;
-    const supabase = createClient();
-    const { error } = await supabase
-      .from("cards")
-      .delete()
-      .eq("id", card.id);
-    if (!error) router.refresh();
-  }
-
-  if (editing) {
-    return (
-      <div className="space-y-2 rounded-xl border border-zinc-200 bg-white p-3">
-        <input
-          value={front}
-          onChange={(e) => setFront(e.target.value)}
-          placeholder="正面"
-          className="w-full rounded-lg border border-zinc-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
-          autoFocus
-        />
-        <textarea
-          value={back}
-          onChange={(e) => setBack(e.target.value)}
-          placeholder="背面（可换行加例句）"
-          rows={3}
-          className="w-full rounded-lg border border-zinc-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
-        />
-        <div className="flex gap-3 text-sm">
-          <button onClick={saveEdit} className="text-teal-600 hover:text-teal-700">
-            保存
-          </button>
-          <button
-            onClick={() => {
-              setFront(card.front);
-              setBack(card.back ?? "");
-              onCancelEdit();
-            }}
-            className="text-zinc-500 hover:text-zinc-700"
-          >
-            取消
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative">
-      <div
-        onClick={() => (selecting ? onToggleSelect() : setFlipped((f) => !f))}
-        role="button"
-        tabIndex={0}
-        className={`block w-full cursor-pointer rounded-xl border bg-white p-4 text-left transition-colors ${
-          selecting && checked
-            ? "border-teal-500 ring-2 ring-teal-200"
-            : "border-zinc-200 hover:border-teal-300"
-        }`}
-      >
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-2">
-            <p className="text-[11px] uppercase tracking-wide text-zinc-400">
-              {flipped ? "背面" : "正面"}
-            </p>
-            <span
-              className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${LANG_COLOR[lang]}`}
-            >
-              {LANG_LABEL[lang]}
-            </span>
-          </div>
-          {selecting && (
-            <span
-              className={`-mr-1 -mt-1 flex h-5 w-5 items-center justify-center rounded-full border text-xs ${
-                checked
-                  ? "border-teal-500 bg-teal-500 text-white"
-                  : "border-zinc-300 bg-white text-transparent"
-              }`}
-            >
-              ✓
-            </span>
-          )}
-        </div>
-        <p className="mt-1 whitespace-pre-wrap text-base font-medium text-zinc-900">
-          {flipped ? card.back || "（空）" : card.front}
-        </p>
-        <div className="mt-2 flex items-center justify-between">
-          <p className="text-xs text-zinc-400">{selecting ? "点选这张" : "点击翻面"}</p>
-          {!selecting && (
-            <SpeakButton
-              text={flipped ? card.back || card.front : card.front}
-              className="rounded-md px-1.5 py-0.5 text-sm leading-none text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
-            />
-          )}
-        </div>
-      </div>
-
-      {selecting && (
-        <button
-          onClick={onStartEdit}
-          className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 text-xs text-zinc-500 shadow-sm hover:bg-zinc-100 hover:text-zinc-700"
-          aria-label="编辑卡片"
-        >
-          <Pencil className="h-3.5 w-3.5" />
-          编辑
-        </button>
-      )}
-
-      {/* 非选择模式：每张卡右上角「⋯」菜单（编辑 / 删除） */}
-      {!selecting && (
-        <div className="absolute right-2 top-2">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setMenuOpen((v) => !v);
-            }}
-            className="rounded-md px-1.5 py-0.5 text-sm text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-            aria-label="更多操作"
-          >
-            ⋯
-          </button>
-          {menuOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-              <div className="absolute right-0 top-full z-20 mt-1 w-28 overflow-hidden rounded-lg border border-zinc-200 bg-white py-1 text-sm shadow-lg">
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onStartEdit();
-                  }}
-                  className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-zinc-700 hover:bg-zinc-50"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  编辑
-                </button>
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    deleteCard();
-                  }}
-                  className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-red-600 hover:bg-red-50"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  删除
-                </button>
-              </div>
-            </>
-          )}
-        </div>
       )}
     </div>
   );

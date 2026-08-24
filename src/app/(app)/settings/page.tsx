@@ -1,6 +1,8 @@
 import { getUserSettings, friendlyQueryError } from "@/lib/supabase/queries";
+import { createClient } from "@/lib/supabase/server";
 import { SettingsForm, LogoutButton } from "@/components/settings-form";
 import { RecognitionRulesForm } from "@/components/recognition-rules-form";
+import { AiModelForm } from "@/components/ai-model-form";
 import { DataBackup } from "@/components/data-backup";
 import type { UserSettings } from "@/lib/types";
 
@@ -23,12 +25,21 @@ function Section({
 }
 
 export default async function SettingsPage() {
+  const supabase = await createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const userEmail = session?.user?.email ?? "";
+
   let settings: UserSettings = {
     daily_goal: 20,
     reminder_enabled: false,
     reminder_time: null,
     recognition_rules: null,
     hidden_themes: [],
+    ai_text_provider: null,
+    ai_speech_provider: null,
+    ai_vision_provider: null,
   };
   let error: string | null = null;
 
@@ -38,20 +49,18 @@ export default async function SettingsPage() {
     error = friendlyQueryError(err);
   }
 
-  // 文本 AI 提供商：跟 .env.local 的 AI_PROVIDER 一致（deepseek 或 anthropic）
-  const provider = (process.env.AI_PROVIDER ?? "anthropic").trim().toLowerCase();
-  const hasAiKey =
-    provider === "deepseek"
-      ? Boolean(process.env.DEEPSEEK_API_KEY)
-      : Boolean(process.env.ANTHROPIC_API_KEY);
-  const aiLabel = provider === "deepseek" ? "DeepSeek" : "Claude";
-  const aiKeyName =
-    provider === "deepseek" ? "DEEPSEEK_API_KEY" : "ANTHROPIC_API_KEY";
-  const hasOpenAI = Boolean(process.env.OPENAI_API_KEY);
+  // 环境里配了哪些 Key（只显示有没有，不显示值），供「AI 模型」板块标「未配 Key」。
+  const aiKeys = {
+    anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
+    deepseek: Boolean(process.env.DEEPSEEK_API_KEY),
+    groq: Boolean(process.env.GROQ_API_KEY),
+    openai: Boolean(process.env.OPENAI_API_KEY),
+    gemini: Boolean(process.env.GEMINI_API_KEY),
+  };
 
   return (
     <div className="mx-auto max-w-2xl">
-      <header className="mb-6">
+      <header className="page-header mb-6">
         <h1 className="text-2xl font-bold text-zinc-900">设置</h1>
       </header>
 
@@ -62,6 +71,21 @@ export default async function SettingsPage() {
       )}
 
       <div className="space-y-4">
+        <section className="card-soft p-5">
+          <div className="flex items-center gap-4">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-teal-600 text-lg font-bold text-white">
+              {userEmail ? userEmail[0].toUpperCase() : "语"}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-zinc-900">{userEmail || "未登录"}</p>
+              <p className="text-xs text-zinc-400">语巢 &middot; Nestlingo</p>
+            </div>
+          </div>
+          <div className="mt-4 border-t border-zinc-100 pt-4">
+            <LogoutButton />
+          </div>
+        </section>
+
         <SettingsForm initial={settings} />
 
         <Section
@@ -72,47 +96,18 @@ export default async function SettingsPage() {
         </Section>
 
         <Section
+          title="AI 模型"
+          description="文字、语音转录、图片识别各选一个提供商；「默认」跟随环境配置，其它选项只在已配 Key 时显示。"
+        >
+          <AiModelForm initial={settings} keys={aiKeys} />
+        </Section>
+
+        <Section
           title="数据备份"
           description="把你的笔记、闪卡、复习进度导出到本地保存，方便备份或迁移。"
         >
           <DataBackup />
         </Section>
-
-        {/* AI 功能状态（只显示有没有配 Key，不显示 Key 本身） */}
-        <Section title="AI 功能状态" description="AI 精读与语音转录需要这些 Key。">
-          <ul className="space-y-2">
-            <li className="flex items-center justify-between rounded-lg bg-zinc-50 px-3 py-2">
-              <span className="text-sm text-zinc-700">AI 精读笔记（{aiLabel}）</span>
-              {hasAiKey ? (
-                <span className="text-xs font-medium text-teal-600">已配置 ✓</span>
-              ) : (
-                <span className="text-xs font-medium text-amber-600">未配置</span>
-              )}
-            </li>
-            <li className="flex items-center justify-between rounded-lg bg-zinc-50 px-3 py-2">
-              <span className="text-sm text-zinc-700">语音转录（Whisper）</span>
-              {hasOpenAI ? (
-                <span className="text-xs font-medium text-teal-600">已配置 ✓</span>
-              ) : (
-                <span className="text-xs font-medium text-amber-600">未配置</span>
-              )}
-            </li>
-          </ul>
-          {(!hasAiKey || !hasOpenAI) && (
-            <p className="mt-3 text-xs leading-relaxed text-zinc-400">
-              在项目根目录的 <code className="rounded bg-zinc-100 px-1">.env.local</code> 里填入
-              {!hasAiKey && ` ${aiKeyName}`}
-              {!hasAiKey && !hasOpenAI && " 和"}
-              {!hasOpenAI && " OPENAI_API_KEY"}
-              ，保存后重启开发服务器即可生效。
-            </p>
-          )}
-        </Section>
-
-        {/* 退出登录放到最底部 */}
-        <div className="pt-2">
-          <LogoutButton />
-        </div>
       </div>
     </div>
   );

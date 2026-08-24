@@ -78,7 +78,7 @@ function parseTable(lines: string[], delim: string, rules?: RecognitionRules | n
 
   return dataRows
     .map((cols) => {
-      let front = (cols[frontIdx] ?? "").trim();
+      const front = (cols[frontIdx] ?? "").trim();
       let back: string;
       if (backIdx === -1) {
         back = cols

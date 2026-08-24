@@ -4,13 +4,15 @@
 // 1) 选择已有未归类词（支持搜索） 2) 新建一张闪卡 3) 粘贴文本转成闪卡。
 // 收录 = 把 cards.theme 设成该主题 key，不新建分类、不删任何卡片。
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Search, X, Sparkles } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { CardWithNote } from "@/lib/types";
 import { parseCards } from "@/lib/parse-cards";
+import { detectCardLang } from "@/lib/lang-detect";
+import { listImportableCollections, type ImportableCollection } from "@/lib/import-collections";
 
-type Tab = "select" | "create" | "paste";
+type Tab = "select" | "create" | "paste" | "collection";
 
 export function CollectWordsModal({
   themeKey,
@@ -31,12 +33,46 @@ export function CollectWordsModal({
   const [busy, setBusy] = useState(false);
   const [lemmatizing, setLemmatizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  // 打开任意 tabs 时清掉上一次的提示。
+  useEffect(() => {
+    setDone(null);
+  }, [tab]);
 
   const [front, setFront] = useState("");
   const [back, setBack] = useState("");
   const [text, setText] = useState("");
 
+  // 「从合集导入」：按笔记/合集搜索，一键把该篇的生词+例句收进当前主题。
+  const [collections, setCollections] = useState<ImportableCollection[]>([]);
+  const [collectionLoading, setCollectionLoading] = useState(false);
+  const [collectionQuery, setCollectionQuery] = useState("");
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
+  const [importing, setImporting] = useState(false);
+
   const supabase = createClient();
+
+  // 首次打开（或切到「从合集导入」）时拉一次所有可导入的合集，跳过当前主题已收录的卡。
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setCollectionLoading(true);
+      try {
+        const list = await listImportableCollections(themeKey);
+        if (!cancelled) setCollections(list);
+      } catch {
+        if (!cancelled) setCollections([]);
+      } finally {
+        if (!cancelled) setCollectionLoading(false);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -47,6 +83,48 @@ export function CollectWordsModal({
         (c.back ?? "").toLowerCase().includes(q)
     );
   }, [unclassified, query]);
+
+  // 按合集标题 / 卡面搜索可导入的合集。
+  const filteredCollections = useMemo(() => {
+    const q = collectionQuery.trim().toLowerCase();
+    if (!q) return collections;
+    return collections.filter(
+      (col) =>
+        col.title.toLowerCase().includes(q) ||
+        col.cards.some((c) => c.front.toLowerCase().includes(q))
+    );
+  }, [collections, collectionQuery]);
+
+  function toggleCollection(noteId: string) {
+    setSelectedNoteIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(noteId)) next.delete(noteId);
+      else next.add(noteId);
+      return next;
+    });
+  }
+
+  // 一键导入所选合集：把这些笔记的全部 生词+例句 卡 theme 设成当前主题。
+  async function importCollections() {
+    if (selectedNoteIds.size === 0) return;
+    setImporting(true);
+    setError(null);
+    const ids = collections
+      .filter((c) => selectedNoteIds.has(c.noteId))
+      .flatMap((c) => c.cards.map((card) => card.id));
+    if (ids.length === 0) {
+      setImporting(false);
+      setDone("所选合集已全部收录");
+      return;
+    }
+    const { error } = await supabase.from("cards").update({ theme: themeKey }).in("id", ids);
+    setImporting(false);
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    onDone();
+  }
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -109,6 +187,7 @@ export function CollectWordsModal({
       back: back.trim() || null,
       kind: "word",
       theme: themeKey,
+      lang: detectCardLang({ front: front.trim(), back: back.trim() || null }),
       position: 0,
     });
     setBusy(false);
@@ -133,6 +212,7 @@ export function CollectWordsModal({
         back: c.back || null,
         kind: "word",
         theme: themeKey,
+        lang: detectCardLang({ front: c.front, back: c.back || null }),
         position: 0,
       }))
     );
@@ -172,6 +252,7 @@ export function CollectWordsModal({
               ["select", "选择已有"],
               ["create", "新建"],
               ["paste", "粘贴"],
+              ["collection", "从合集导入"],
             ] as [Tab, string][]
           ).map(([t, label]) => (
             <button
@@ -191,6 +272,12 @@ export function CollectWordsModal({
         {error && (
           <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
             {error}
+          </p>
+        )}
+
+        {done && (
+          <p className="mb-3 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-700">
+            {done}
           </p>
         )}
 
@@ -305,6 +392,61 @@ export function CollectWordsModal({
               className="w-full rounded-lg bg-teal-600 py-2 text-sm font-semibold text-white transition-colors hover:bg-teal-700 disabled:opacity-60"
             >
               {busy ? "转换中…" : "转成闪卡并收录"}
+            </button>
+          </div>
+        )}
+
+        {tab === "collection" && (
+          <div>
+            <p className="mb-2 text-xs text-zinc-400">
+              按笔记/合集搜索，一键把该篇的「生词 + 例句」一起收进当前主题。
+            </p>
+            <div className="relative mb-3">
+              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+              <input
+                value={collectionQuery}
+                onChange={(e) => setCollectionQuery(e.target.value)}
+                placeholder="搜索笔记标题 / 词面…"
+                className="w-full rounded-lg border border-zinc-200 py-2 pl-9 pr-3 text-sm focus:border-teal-500 focus:outline-none"
+              />
+            </div>
+            <div className="max-h-72 space-y-1 overflow-y-auto">
+              {collectionLoading ? (
+                <p className="py-8 text-center text-sm text-zinc-400">加载中…</p>
+              ) : filteredCollections.length === 0 ? (
+                <p className="py-8 text-center text-sm text-zinc-400">
+                  没有可导入的合集（该主题已收录的卡会自动跳过）。
+                </p>
+              ) : (
+                filteredCollections.map((col) => (
+                  <label
+                    key={col.noteId}
+                    className="flex items-center gap-2.5 rounded-lg border border-zinc-100 px-3 py-2 hover:bg-zinc-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedNoteIds.has(col.noteId)}
+                      onChange={() => toggleCollection(col.noteId)}
+                      className="h-4 w-4 shrink-0 accent-teal-600"
+                    />
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800">
+                      {col.title}
+                    </span>
+                    <span className="shrink-0 rounded-full bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-600">
+                      {col.cards.length} 张待收录
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+            <button
+              onClick={importCollections}
+              disabled={importing || selectedNoteIds.size === 0}
+              className="mt-3 w-full rounded-lg bg-teal-600 py-2 text-sm font-semibold text-white transition-colors hover:bg-teal-700 disabled:opacity-60"
+            >
+              {importing
+                ? "导入中…"
+                : `导入 ${selectedNoteIds.size} 个合集`}
             </button>
           </div>
         )}

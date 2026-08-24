@@ -4,6 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { FolderPlus, FileText, Folder, Search } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import {
+  flattenFolderTree,
+  descendantFolderIds,
+  folderNoteTotals,
+} from "@/lib/folders";
 import { NoteList } from "./notes-browser";
 import { NewNoteButton } from "./new-note-button";
 import type { Folder as FolderType, Note } from "@/lib/types";
@@ -40,39 +45,33 @@ export function NotesWorkspace({
   const [query, setQuery] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [folderName, setFolderName] = useState("");
+  const [newFolderParentId, setNewFolderParentId] = useState<string | null>(null);
   const [menuFolderId, setMenuFolderId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
 
   const q = query.trim().toLowerCase();
   const filtered = useMemo(() => {
+    // 选中父文件夹时，展示它（含子文件夹）下所有笔记；选「全部」则不过滤文件夹。
+    const scope =
+      selectedId === "all" ? null : descendantFolderIds(folders, selectedId);
     return notes.filter((n) => {
-      if (selectedId !== "all" && n.folder_id !== selectedId) return false;
+      if (scope && !(n.folder_id && scope.has(n.folder_id))) return false;
       if (!q) return true;
       return (
         n.title.toLowerCase().includes(q) ||
         (n.content_text ?? "").toLowerCase().includes(q)
       );
     });
-  }, [notes, selectedId, q]);
+  }, [notes, selectedId, q, folders]);
 
   // 打开某篇笔记时文件夹栏自动收起（≡ 按钮仍在笔记列表栏顶部，可随时展开）。
+  // 依赖 pathname 而非仅 isNote：笔记页之间跳转、或在笔记页展开文件夹栏后点另一篇，
+  // pathname 都会变、都要重新收起；只依赖 isNote 时这些场景不会触发（栏会一直开着）。
   useEffect(() => {
     if (isNote) setCollapsed(true);
-  }, [isNote]);
-
-  // 笔记页（/notes/[id]）的列表显示全部笔记（忽略文件夹筛选），方便随时切到别的笔记。
-  const noteMatches = useMemo(
-    () =>
-      notes.filter((n) => {
-        if (!q) return true;
-        return (
-          n.title.toLowerCase().includes(q) ||
-          (n.content_text ?? "").toLowerCase().includes(q)
-        );
-      }),
-    [notes, q]
-  );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
 
   const folderCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -82,6 +81,13 @@ export function NotesWorkspace({
     return m;
   }, [notes]);
 
+  // 侧栏按「含子文件夹」的总数显示（父文件夹不直接放笔记时，也看得出下面有多少篇）。
+  const folderTotals = useMemo(
+    () => folderNoteTotals(folders, folderCounts),
+    [folders, folderCounts]
+  );
+  const flatFolders = useMemo(() => flattenFolderTree(folders), [folders]);
+
   const selectedFolder = folders.find((f) => f.id === selectedId);
   const listTitle =
     selectedId === "all" ? "全部笔记" : (selectedFolder?.name ?? "全部笔记");
@@ -90,10 +96,13 @@ export function NotesWorkspace({
     const name = folderName.trim();
     if (!name) return;
     const supabase = createClient();
-    const { error } = await supabase.from("folders").insert({ name });
+    const { error } = await supabase
+      .from("folders")
+      .insert({ name, parent_id: newFolderParentId });
     if (error) return;
     setFolderName("");
     setShowNewFolder(false);
+    setNewFolderParentId(null);
     router.refresh();
   }
 
@@ -110,7 +119,9 @@ export function NotesWorkspace({
 
   async function removeFolder(folder: FolderType) {
     if (
-      !window.confirm(`删除文件夹「${folder.name}」？里面的笔记会保留，变成无文件夹。`)
+      !window.confirm(
+        `删除文件夹「${folder.name}」？它的子文件夹会一起删除，里面的笔记都会保留（变成无文件夹）。`
+      )
     ) {
       return;
     }
@@ -127,11 +138,12 @@ export function NotesWorkspace({
   }
 
   // /notes 与 /notes/[id] 共用同一套侧栏：文件夹栏 + 笔记列表 + 内容。
-  // 区别在于 /notes/[id] 时文件夹栏默认收起、列表显示全部笔记。
-  const listNotes = isNote ? noteMatches : filtered;
-  const headerTitle = isNote ? "笔记" : listTitle;
-  const showFolderTag = isNote ? false : selectedId === "all";
-  const newNoteFolderId = isNote ? null : selectedId === "all" ? null : selectedId;
+  // 列表始终跟着「选中的文件夹」走——从某个文件夹点进笔记，左侧列表仍只显示该文件夹
+  // （含子文件夹）下的笔记，不再跳回「全部笔记」；只有「全部笔记」被选中时才显示全部。
+  const listNotes = filtered;
+  const headerTitle = listTitle;
+  const showFolderTag = selectedId === "all";
+  const newNoteFolderId = selectedId === "all" ? null : selectedId;
 
   return (
     <div className="flex md:h-screen">
@@ -151,7 +163,10 @@ export function NotesWorkspace({
               笔记
             </span>
             <button
-              onClick={() => setShowNewFolder((v) => !v)}
+              onClick={() => {
+                setNewFolderParentId(null);
+                setShowNewFolder((v) => !v);
+              }}
               className="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100"
               aria-label="新建文件夹"
               title="新建文件夹"
@@ -171,7 +186,7 @@ export function NotesWorkspace({
               <input
                 value={folderName}
                 onChange={(e) => setFolderName(e.target.value)}
-                placeholder="新文件夹名"
+                placeholder={newFolderParentId ? "子文件夹名" : "新文件夹名"}
                 autoFocus
                 className="min-w-0 flex-1 rounded-lg border border-zinc-300 px-2 py-1 text-sm focus:border-teal-500 focus:outline-none"
               />
@@ -199,12 +214,16 @@ export function NotesWorkspace({
               <span className="text-xs text-zinc-400">{notes.length}</span>
             </button>
 
-            {/* 文件夹（flat，无 toggle，点击即筛选） */}
-            {folders.map((folder) => {
-              const count = folderCounts.get(folder.id) ?? 0;
+            {/* 文件夹（缩进树，点击即筛选；父文件夹会包含其子文件夹下的笔记） */}
+            {flatFolders.map(({ folder, depth }) => {
+              const count = folderTotals.get(folder.id) ?? 0;
               if (editingId === folder.id) {
                 return (
-                  <div key={folder.id} className="mt-0.5 flex items-center gap-1 px-1">
+                  <div
+                    key={folder.id}
+                    style={{ marginLeft: depth * 12 }}
+                    className="mt-0.5 flex items-center gap-1 px-1"
+                  >
                     <Folder className="h-4 w-4 shrink-0 text-zinc-400" />
                     <input
                       value={editingName}
@@ -232,7 +251,11 @@ export function NotesWorkspace({
                 );
               }
               return (
-                <div key={folder.id} className="group relative">
+                <div
+                  key={folder.id}
+                  style={{ marginLeft: depth * 12 }}
+                  className="group relative"
+                >
                   <button
                     onClick={() => setSelectedId(folder.id)}
                     className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors ${
@@ -262,7 +285,17 @@ export function NotesWorkspace({
                         className="fixed inset-0 z-30"
                         onClick={() => setMenuFolderId(null)}
                       />
-                      <div className="absolute right-0 z-40 mt-1 w-28 rounded-xl border border-zinc-200 bg-white p-1 shadow-lg">
+                      <div className="absolute right-0 z-40 mt-1 w-32 rounded-xl border border-zinc-200 bg-white p-1 shadow-lg">
+                        <button
+                          onClick={() => {
+                            setNewFolderParentId(folder.id);
+                            setShowNewFolder(true);
+                            setMenuFolderId(null);
+                          }}
+                          className="flex w-full rounded-lg px-2.5 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100"
+                        >
+                          新建子文件夹
+                        </button>
                         <button
                           onClick={() => {
                             setEditingId(folder.id);

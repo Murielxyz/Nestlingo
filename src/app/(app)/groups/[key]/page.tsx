@@ -6,6 +6,7 @@ import {
   friendlyQueryError,
 } from "@/lib/supabase/queries";
 import { themeMeta, themeOf } from "@/lib/word-themes";
+import { cardLang, LANG_ORDER, type Lang } from "@/lib/lang-detect";
 import { ThemeDetail } from "@/components/theme-detail";
 import type { WordTheme } from "@/lib/types";
 
@@ -16,10 +17,14 @@ import type { WordTheme } from "@/lib/types";
  */
 export default async function ThemeListPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ key: string }>;
+  searchParams: Promise<{ lang?: string }>;
 }) {
   const { key } = await params;
+  const { lang } = await searchParams;
+  const langFilter = lang && LANG_ORDER.includes(lang as Lang) ? (lang as Lang) : null;
 
   let cards: Awaited<ReturnType<typeof listWordCards>> = [];
   let themes: WordTheme[] = [];
@@ -50,8 +55,10 @@ export default async function ThemeListPage({
   const label = builtin?.label ?? custom?.name ?? key;
   const isCustom = !builtin;
 
-  // 本主题下的词；「未归类」的词（含隐藏主题回流到「未分类」的）供「收录」弹窗选择。
-  const themeCards = cards.filter((c) => themeOf(c, themes) === key);
+  // 本主题下的词；从词群页选了语言进来时同语言才显示，保持「面板显示 N 条 ⇔ 详情也 N 条」一致。
+  const themeCards = cards.filter(
+    (c) => themeOf(c, themes) === key && (!langFilter || cardLang(c) === langFilter)
+  );
   const unclassified = cards.filter((c) => {
     const k = themeOf(c, themes);
     return k === "other" || hiddenThemes.includes(k);
@@ -71,6 +78,7 @@ export default async function ThemeListPage({
         cards={themeCards}
         unclassified={unclassified}
         hiddenThemes={hiddenThemes}
+        lang={langFilter}
       />
     </div>
   );

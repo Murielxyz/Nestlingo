@@ -68,6 +68,12 @@ alter table public.cards add column if not exists kind text;
 -- 给已存在的库补 theme 列（词群页「AI 智能整理」把生词归到的场景主题 key，删卡即随之消失）
 alter table public.cards add column if not exists theme text;
 
+-- 给已存在的库补 lang 列（卡片语言 thai/korean/chinese/japanese/other；转卡时自动判断，可手动改）
+alter table public.cards add column if not exists lang text;
+
+-- 给已存在的库补 reading 列（日语生词的读音，JSON 字符串存 text+reading 分段；背诵/卡片在汉字上方标假名）
+alter table public.cards add column if not exists reading text;
+
 -- ============================================================
 -- 表 4：复习状态 review_state（SM-2 间隔重复，每张卡一条）
 -- ============================================================
@@ -106,6 +112,11 @@ alter table public.user_settings add column if not exists recognition_rules json
 
 -- 给已存在的库补 hidden_themes 列（幂等）：用户隐藏（删除）的内置词群主题 key
 alter table public.user_settings add column if not exists hidden_themes text[] default '{}';
+
+-- 给已存在的库补「AI 模型」列（幂等）：每任务一个，null=用环境默认
+alter table public.user_settings add column if not exists ai_text_provider text;   -- 'claude' | 'deepseek'
+alter table public.user_settings add column if not exists ai_speech_provider text; -- 'groq' | 'openai'
+alter table public.user_settings add column if not exists ai_vision_provider text; -- 'claude' | 'openai'
 
 -- ============================================================
 -- 索引（加快按用户 / 按文件夹 / 按笔记 / 按到期查询）
@@ -220,3 +231,112 @@ create policy "test_errors_own" on public.test_errors
 drop trigger if exists test_errors_set_updated_at on public.test_errors;
 create trigger test_errors_set_updated_at before update on public.test_errors
   for each row execute function public.set_updated_at();
+
+-- ============================================================
+-- 表 8：素材合集 material_collections（用户可建，照 word_themes；无 updated_at）
+-- ============================================================
+create table if not exists public.material_collections (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null default auth.uid(),
+  name       text not null,
+  created_at timestamptz not null default now()
+);
+
+-- 合集的「定义标签」：语言 + 类型（可选，用户可手动设置；不设则筛选时按里面素材的标签兜底）。
+alter table public.material_collections add column if not exists lang text;
+alter table public.material_collections add column if not exists type text;
+
+create index if not exists material_collections_user_id_idx
+  on public.material_collections (user_id);
+
+alter table public.material_collections enable row level security;
+
+drop policy if exists "material_collections_own" on public.material_collections;
+create policy "material_collections_own" on public.material_collections
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ============================================================
+-- 表 9：素材 materials
+--   type:    youtube / audio / spotify / link / podcast
+--   status:  pending（待处理）/ imported（已导入）
+--   note_id: 导入到的笔记（删笔记只孤立标记，不删素材）
+--   collection_id: 所属合集（删合集退归类[置 null]，素材行保留）
+-- ============================================================
+create table if not exists public.materials (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null default auth.uid(),
+  url           text not null,
+  type          text not null default 'link',
+  title         text not null default '',
+  source        text,
+  thumbnail     text,
+  lang          text,
+  status        text not null default 'pending',
+  note_id       uuid references public.notes(id) on delete set null,
+  -- 删合集「退归类(置 null)」而非级联删素材（对齐上方注释 + UI「素材退到单条」提示）。
+  -- 注意：下方有幂等 alter 可修掉已建库里的旧 cascade 约束；新装直接走这里。
+  collection_id uuid references public.material_collections(id) on delete set null,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+-- 修正已有库：把旧「on delete cascade」换成「on delete set null」，避免删合集误删其内素材。
+-- 约束名由 PG 对 `collection_id` 自动生成（`materials_collection_id_fkey`），drop 幂等、重建安全。
+alter table public.materials drop constraint if exists materials_collection_id_fkey;
+alter table public.materials add constraint materials_collection_id_fkey
+  foreign key (collection_id) references public.material_collections(id) on delete set null;
+
+create index if not exists materials_user_id_idx      on public.materials (user_id);
+create index if not exists materials_collection_id_idx on public.materials (collection_id);
+create index if not exists materials_note_id_idx       on public.materials (note_id);
+
+-- 给已存在的库补 content 列（AI 生成素材 / 网页文章正文的原文，转成笔记时用）
+alter table public.materials add column if not exists content text;
+
+-- 给已存在的库补 file_kind 列（上传文件素材的子类：audio / image / doc）
+alter table public.materials add column if not exists file_kind text;
+
+alter table public.materials enable row level security;
+
+drop policy if exists "materials_own" on public.materials;
+create policy "materials_own" on public.materials
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop trigger if exists materials_set_updated_at on public.materials;
+create trigger materials_set_updated_at before update on public.materials
+  for each row execute function public.set_updated_at();
+
+-- ============================================================
+-- 表 10：素材文件上传用的存储桶（materials）
+--   上传的音频 / 图片 / 文档都放这里，按「每用户一个前缀文件夹」隔离。
+--   脚本可重复运行（on conflict do nothing）。
+-- ============================================================
+insert into storage.buckets (id, name, public)
+values ('materials', 'materials', true)
+on conflict (id) do nothing;
+
+-- 存储桶 RLS：登录用户只能往「自己的用户 id 文件夹」下上传/读取自己的文件。
+drop policy if exists "materials_bucket_read" on storage.objects;
+create policy "materials_bucket_read" on storage.objects
+  for select to authenticated
+  using (bucket_id = 'materials' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "materials_bucket_write" on storage.objects;
+create policy "materials_bucket_write" on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'materials' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- 启动桶初值保留了 public 读：上传文件的 URL 会被 <img>/<audio> 直接引用（无鉴权头），
+-- 改私有会破坏自身展示；路径含「uid + 随机 uuid」难以猜测，单用户下实用风险低。
+-- （长期可改用签名 URL 收紧，见 UPDATE_LOG。）
+-- 这里补上缺失的 UPDATE / DELETE 策略：否则用户改/删自己上传的文件会被拒（覆盖/替换失败）。
+drop policy if exists "materials_bucket_update" on storage.objects;
+create policy "materials_bucket_update" on storage.objects
+  for update to authenticated
+  using (bucket_id = 'materials' and (storage.foldername(name))[1] = auth.uid()::text)
+  with check (bucket_id = 'materials' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "materials_bucket_delete" on storage.objects;
+create policy "materials_bucket_delete" on storage.objects
+  for delete to authenticated
+  using (bucket_id = 'materials' and (storage.foldername(name))[1] = auth.uid()::text);

@@ -10,9 +10,10 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NextResponse } from "next/server";
-import { FormData as UndiciFormData } from "undici";
 import { createClient } from "@/lib/supabase/server";
 import { serverFetch } from "@/lib/server-fetch";
+import { transcribeAudio } from "@/lib/transcribe";
+import { YTDLP_DISABLED } from "@/lib/feature-flags";
 
 export const runtime = "nodejs";
 
@@ -52,8 +53,13 @@ function parseVtt(vtt: string): string {
   return out.join(" ").replace(/\s+/g, " ").trim();
 }
 
-/** 抓取 YouTube 字幕并拼成纯文字。失败会抛出带中文提示的错误。 */
-async function fetchYouTubeTranscript(videoId: string): Promise<string> {
+/**
+ * 抓取 YouTube 字幕并拼成纯文字。
+ * - 有字幕（含自动）→ 返回文字；
+ * - 操作成功但真没字幕 → 返回 null（交给调用方切换「听声转录」）；
+ * - yt-dlp 被拦 / 执行报错 → 抛出带中文提示的错误（环境问题，试听声也没意义）。
+ */
+async function fetchYouTubeSubtitles(videoId: string): Promise<string | null> {
   // 用 yt-dlp + Chrome 登录态抓字幕（含自动字幕）。YouTube 对无登录态请求直接
   // bot 拦截，youtube-transcript 那种裸请求已失效；带浏览器 cookie 才能过。
   const tmpDir = mkdtempSync(join(tmpdir(), "yt-subs-"));
@@ -93,17 +99,92 @@ async function fetchYouTubeTranscript(videoId: string): Promise<string> {
       }
     }
   } catch {
-    /* 读文件异常就走下面的报错分支 */
+    /* 读文件异常就走下面 */
   }
   rmSync(tmpDir, { recursive: true, force: true });
 
   // 区分「被 YouTube 拦截 / 代理问题」和「真没字幕」。
   const blocked = /bot|sign in|precondition|challenge|proxy|connect|timed out|failed|SSL|EOF|violation/i.test(stderr);
-  throw new Error(
-    blocked
-      ? "被 YouTube 拦截了——它要求登录态。请确认本机 Chrome 已登录 YouTube、.env.local 里 HTTPS_PROXY 已配置，然后重启 dev 再试。"
-      : "没能抓到字幕——这个视频可能没开字幕，或只有不在常用语言里的自动字幕。你可以到视频页手动复制字幕/文字稿，粘贴到笔记里视频下方，再点「AI 精读」。"
-  );
+  if (blocked) {
+    throw new Error(
+      "被 YouTube 拦截了——它要求登录态。请确认本机 Chrome 已登录 YouTube、.env.local 里 HTTPS_PROXY 已配置，然后重启 dev 再试。"
+    );
+  }
+  return null; // 真没字幕 → 调用方切到「听声转录」
+}
+
+/** 常见音频扩展名 → Whisper 可识别的 MIME。 */
+const AUDIO_MIME: Record<string, string> = {
+  m4a: "audio/mp4",
+  mp4: "audio/mp4",
+  webm: "audio/webm",
+  opus: "audio/ogg",
+  ogg: "audio/ogg",
+  oga: "audio/ogg",
+  mp3: "audio/mpeg",
+  aac: "audio/aac",
+  mpeg: "audio/mpeg",
+  wav: "audio/wav",
+  flac: "audio/flac",
+};
+
+/**
+ * 无字幕视频的「听声转录」：用 yt-dlp 下载纯音频（bestaudio 原生格式，不转码、免 ffmpeg），
+ * 交给 Whisper 转写成文字。仅当字幕抓不到时才走到这一步，成本较高，适合较短视频。
+ */
+async function fetchYouTubeAudioTranscript(videoId: string): Promise<string> {
+  const tmpDir = mkdtempSync(join(tmpdir(), "yt-audio-"));
+  const outBase = join(tmpDir, "audio");
+  const args = [
+    "-m", "yt_dlp",
+    "--cookies-from-browser", "chrome",
+    "-f", "bestaudio",
+    "--no-playlist",
+    "--no-warnings",
+    "--output", outBase,
+  ];
+  const proxy = proxyUrl();
+  if (proxy) args.push("--proxy", proxy);
+  args.push(`https://www.youtube.com/watch?v=${videoId}`);
+
+  let stderr = "";
+  try {
+    await execFileAsync("python3", args, { timeout: 180_000, maxBuffer: 30 * 1024 * 1024 });
+  } catch (err) {
+    stderr = (err as { stderr?: string }).stderr ?? String(err);
+  }
+
+  // 找到真正下载到的音频文件（排除 .part/.vtt 等中间产物）。
+  let file: string | undefined;
+  try {
+    file = readdirSync(tmpDir).find((f) =>
+      /\.(m4a|webm|mp3|ogg|opus|aac|mpeg|mp4|wav|flac)$/i.test(f)
+    );
+  } catch {
+    /* 读不了目录 → 下面走报错 */
+  }
+
+  if (!file) {
+    rmSync(tmpDir, { recursive: true, force: true });
+    throw new Error(
+      "没能下载到这个视频的音频（可能被 YouTube 拦截，或视频没有音频轨）。" +
+        (stderr ? ` 详情：${stderr.slice(0, 300)}` : "")
+    );
+  }
+
+  const buf = readFileSync(join(tmpDir, file));
+  rmSync(tmpDir, { recursive: true, force: true });
+
+  if (buf.byteLength > MAX_BYTES) {
+    throw new Error(
+      "这段音频超过 25MB（视频可能太长）——Whisper 转录会比较贵。建议换更短的片段或先剪辑再试。"
+    );
+  }
+
+  // Buffer 可能只是底层大缓冲的 view，切出精确的 ArrayBuffer 再交给 Whisper。
+  const buffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+  const ext = (file.match(/\.([a-z0-9]+)$/i)?.[1] ?? "webm").toLowerCase();
+  return transcribeAudio(buffer, `audio.${ext}`, AUDIO_MIME[ext] ?? "audio/webm");
 }
 
 export async function POST(req: Request) {
@@ -126,28 +207,27 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "没有媒体链接" }, { status: 400 });
   }
 
-  // ===== YouTube：抓字幕（无需 OpenAI Key） =====
+  // ===== YouTube：先抓字幕；没字幕就「听声转录」（下载音频交给 Whisper） =====
   const yt = url.match(YT_ID_RE);
   if (yt?.[1]) {
+    if (YTDLP_DISABLED) {
+      return NextResponse.json({ error: "此功能暂未启用" }, { status: 503 });
+    }
     try {
-      const text = await fetchYouTubeTranscript(yt[1]);
-      return NextResponse.json({ text });
+      const subText = await fetchYouTubeSubtitles(yt[1]);
+      if (subText) return NextResponse.json({ text: subText });
+      // 真没字幕 → 听到什么转什么。
+      const text = await fetchYouTubeAudioTranscript(yt[1]);
+      return NextResponse.json({ text, via: "audio" });
     } catch (err) {
       return NextResponse.json(
-        { error: err instanceof Error ? err.message : "字幕抓取失败" },
-        { status: 404 }
+        { error: err instanceof Error ? err.message : "文字稿生成失败" },
+        { status: 502 }
       );
     }
   }
 
-  // ===== 音频：Whisper 转录 =====
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "未配置 OPENAI_API_KEY（在 .env.local 里填 OpenAI 的 API Key，用于语音转录）" },
-      { status: 400 }
-    );
-  }
+  // ===== 音频：转录（收音频直链，下载后交给共享的转写逻辑） =====
   if (!AUDIO_EXT.test(url)) {
     return NextResponse.json(
       { error: "这个链接不是可识别的音频文件（支持 mp3 / m4a / aac / wav / ogg / opus / flac 直链）" },
@@ -181,36 +261,11 @@ export async function POST(req: Request) {
   }
 
   try {
-    // 用 undici 的 FormData（跟 serverFetch 内部的 undici fetch 是同一份），
-    // 全局 FormData 会被 undici fetch 当成普通对象序列化，导致 multipart 传不上去。
-    const form = new UndiciFormData();
-    form.append("model", "whisper-1");
     // 从 URL 猜扩展名，Whisper 依赖文件名判断格式（可选，但更稳）。
     const extMatch = url.match(/\.([a-z0-9]+)(?:\?.*)?$/i);
     const ext = extMatch?.[1]?.toLowerCase() ?? "mp3";
     const mime = `audio/${ext === "oga" ? "ogg" : ext}`;
-    // 用 Blob 而非 File：Node 18 就有全局 Blob，兼容性更好。
-    form.append("file", new Blob([audioBuffer], { type: mime }), `audio.${ext}`);
-
-    const res = await serverFetch("https://api.openai.com/v1/audio/transcriptions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: form as unknown as BodyInit,
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      return NextResponse.json(
-        { error: `转录失败（${res.status}）：${errText.slice(0, 300)}` },
-        { status: 502 }
-      );
-    }
-
-    const data = await res.json();
-    const text = typeof data?.text === "string" ? data.text.trim() : "";
-    if (!text) {
-      return NextResponse.json({ error: "转录结果为空" }, { status: 502 });
-    }
+    const text = await transcribeAudio(audioBuffer, `audio.${ext}`, mime);
     return NextResponse.json({ text });
   } catch (err) {
     return NextResponse.json(

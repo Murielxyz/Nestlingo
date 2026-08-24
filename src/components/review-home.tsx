@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FlaskConical, Play, FolderOpen, Sparkles, BookX } from "lucide-react";
 import type { ReviewStats, CollectionSummary } from "@/lib/types";
 import type { ReviewItem } from "@/lib/supabase/queries";
 import { SpeakButton } from "./speak-button";
+import { cardLang } from "@/lib/lang-detect";
 import { CardFront } from "./card-front";
 
 function kindBadge(kind: string | null) {
@@ -39,6 +41,15 @@ function findStoredActiveCollection(
   }
 }
 
+/** 兜底合集：最近复习过 > 到期最多 > 第一个（确定性，避免 SSR 与客户端不一致）。 */
+function defaultCollection(collections: CollectionSummary[]): CollectionSummary | null {
+  const reviewed = collections
+    .filter((c) => c.lastReviewedAt != null)
+    .sort((a, b) => (b.lastReviewedAt ?? 0) - (a.lastReviewedAt ?? 0))[0];
+  if (reviewed) return reviewed;
+  return collections.find((c) => c.due > 0) ?? collections[0] ?? null;
+}
+
 /**
  * 复习页主页：
  * 1. 顶部标题 + 错题集入口；
@@ -58,18 +69,26 @@ export function ReviewHome({
 }) {
   // 「正在背的合集」：先按最近复习、到期最多、第一个兜底（确定性，避免 SSR 与客户端不一致）；
   // 挂载后再读上次背过的那个（背了几张就落 localStorage 的进度）切换过去。用户也可在弹窗里切换。
-  const [current, setCurrent] = useState<CollectionSummary | null>(() => {
-    const reviewed = collections
-      .filter((c) => c.lastReviewedAt != null)
-      .sort((a, b) => (b.lastReviewedAt ?? 0) - (a.lastReviewedAt ?? 0))[0];
-    if (reviewed) return reviewed;
-    return collections.find((c) => c.due > 0) ?? collections[0] ?? null;
-  });
+  const [current, setCurrent] = useState<CollectionSummary | null>(() =>
+    defaultCollection(collections)
+  );
+  const router = useRouter();
+  // 复习页可能被客户端路由缓存（在闪卡页删合集后返回，这里仍显示旧列表）——挂载时刷新一次拿到最新合集。
+  useEffect(() => {
+    router.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     const stored = findStoredActiveCollection(collections);
     if (stored) setCurrent(stored);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // 合集列表变化（例如在闪卡页删掉了某个合集）后，若「正在背」已不在列表里，回退到默认合集。
+  useEffect(() => {
+    if (current && !collections.some((c) => c.key === current.key)) {
+      setCurrent(findStoredActiveCollection(collections) ?? defaultCollection(collections));
+    }
+  }, [collections, current]);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   // 「到期待复习」只看「正在背的合集」里的新旧待复习卡（不数全局，避免随新卡越积越多）。
@@ -82,7 +101,7 @@ export function ReviewHome({
 
   return (
     <div>
-      <header className="sticky top-[max(1rem,env(safe-area-inset-top))] z-20 -mx-4 -mt-6 mb-5 flex items-center justify-between gap-3 border-b border-zinc-100 bg-paper/95 px-4 py-3 backdrop-blur md:static md:mx-0 md:mt-0 md:border-0 md:bg-transparent md:px-0 md:py-0">
+      <header className="page-header mb-5 flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-zinc-900">复习</h1>
         <Link
           href="/review?scope=errors"
@@ -190,7 +209,7 @@ export function ReviewHome({
                     {kindBadge(w.card.kind)}
                   </span>
                 )}
-                <SpeakButton text={w.card.front} />
+                <SpeakButton text={w.card.front} lang={cardLang(w.card)} />
                 <Link
                   href={`/cards/${w.card.id}?from=/review`}
                   className="shrink-0 text-sm text-zinc-400 transition-colors hover:text-zinc-700"

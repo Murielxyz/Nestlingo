@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FileUp, CircleCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { parseCards, type ParsedCard } from "@/lib/parse-cards";
+import { detectCardLang } from "@/lib/lang-detect";
 import type { RecognitionRules } from "@/lib/types";
 
 /**
@@ -17,7 +18,7 @@ export function AddCardsButton() {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
+        className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
       >
         ＋ 添加闪卡
       </button>
@@ -122,25 +123,26 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
         front: c.front.trim(),
         back: c.back.trim(),
         kind: c.kind ?? null,
+        lang: detectCardLang({ front: c.front.trim(), back: c.back.trim() }),
         position: i,
       }));
     if (rows.length === 0) {
-      setError("没有可入库的卡片。");
+      setError("没有可入库的闪卡。");
       return;
     }
     setSaving(true);
     setError(null);
     const supabase = createClient();
-    // 先建一个「卡片文件」（空笔记，source_type 标记为 cards），再把卡挂进去，
+    // 先建一个「闪卡文件」（空笔记，source_type 标记为 cards），再把卡挂进去，
     // 这样卡片页 / 复习页能按文件分组，而不是散落的独立卡片。
     const { data: note, error: noteErr } = await supabase
       .from("notes")
-      .insert({ title: title.trim() || "未命名卡片集", source_type: "cards" })
+      .insert({ title: title.trim() || "未命名闪卡集", source_type: "cards" })
       .select("id")
       .single();
     if (noteErr || !note) {
       setSaving(false);
-      setError(noteErr?.message ?? "创建卡片文件失败。");
+      setError(noteErr?.message ?? "创建闪卡文件失败。");
       return;
     }
     const { error } = await supabase
@@ -162,7 +164,7 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
           <div>
             <h2 className="text-base font-semibold text-zinc-900">添加闪卡</h2>
             <p className="mt-0.5 text-xs text-zinc-500">
-              粘贴内容自动识别成卡片，存成一个卡片文件。
+              粘贴内容自动识别成卡片，存成一个闪卡文件。
             </p>
           </div>
           <button
@@ -178,7 +180,7 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
           <div className="px-4 py-10 text-center">
             <CircleCheck className="mx-auto h-10 w-10 text-teal-500" />
             <p className="mt-3 text-sm text-zinc-700">
-              已把 {cards.length} 张卡片放进「{title.trim() || "未命名卡片集"}」。
+              已把 {cards.length} 张闪卡放进「{title.trim() || "未命名闪卡集"}」。
             </p>
             <button
               onClick={onClose}

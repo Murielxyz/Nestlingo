@@ -1,0 +1,36 @@
+# .claudeignore —— 禁止 Claude 读取的路径
+# 1) 无用/生成物文件
+node_modules/
+.next/
+out/
+dist/
+build/
+coverage/
+*.log
+*.tsbuildinfo
+.DS_Store
+
+# 2) 敏感密钥 / 环境配置（绝不读取、绝不回显）
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+
+# 3) 大型二进制 / 媒体
+*.mp4
+*.mp3
+*.mov
+*.wav
+*.webm
+*.m4a
+*.pdf
+*.zip
+*.tar
+*.gz
+
+# 4) 其他无关
+temp/
+tmp/
+.git/

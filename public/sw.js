@@ -37,22 +37,26 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 静态资源：缓存优先
+  // 静态资源：后台自动更新（stale-while-revalidate）——
+  // 有缓存先返回（秒开），同时后台拉新覆盖缓存，下次访问即拿新资源，部署后无需手动清缓存。
   if (
     url.pathname.startsWith("/_next/static") ||
     url.pathname.startsWith("/icons/") ||
     url.pathname.startsWith("/icon.")
   ) {
     event.respondWith(
-      caches.match(request).then(
-        (m) =>
-          m ||
-          fetch(request).then((res) => {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(request, copy));
+      caches.match(request).then((m) => {
+        const revalidate = fetch(request)
+          .then((res) => {
+            if (res && res.status === 200) {
+              const copy = res.clone();
+              caches.open(CACHE).then((c) => c.put(request, copy));
+            }
             return res;
           })
-      )
+          .catch(() => m);
+        return m || revalidate;
+      })
     );
   }
 });

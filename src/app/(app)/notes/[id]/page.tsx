@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getNote, listFolders, listCards } from "@/lib/supabase/queries";
+import { getNote, listFolders, listCards, listSourceMaterials } from "@/lib/supabase/queries";
 import { NoteEditor } from "@/components/note-editor";
 
 export default async function NotePage({
@@ -26,12 +26,16 @@ export default async function NotePage({
   // 文件夹已合并进笔记页，返回一律回「笔记」主页。
   const backHref = "/notes";
 
+  // 这篇笔记「来自」的素材（反向回标来源，一篇可有多条）。非关键，失败为空不影响打开。
+  const sourceMaterials = await listSourceMaterials(id);
+
   return (
     <NoteEditor
       note={note}
       folders={folders}
       backHref={backHref}
       cardCount={cardCount}
+      sourceMaterials={sourceMaterials}
     />
   );
 }

@@ -13,9 +13,13 @@ import type {
   CollectionSummary,
   UserSettings,
   WordTheme,
+  Material,
+  MaterialWithNote,
+  MaterialCollection,
+  SourceMaterial,
 } from "@/lib/types";
 import { themeOf } from "@/lib/word-themes";
-import { detectLang } from "@/lib/lang-detect";
+import { detectLang, cardLang } from "@/lib/lang-detect";
 
 /** 待复习的一张卡 + 它已有的复习状态（没复习过为 null）。 */
 export type ReviewItem = {
@@ -142,7 +146,7 @@ export async function getCard(id: string): Promise<CardWithNote | null> {
   return { ...(data as Card), note_title };
 }
 
-/** 不挂在任何笔记下的独立卡片（「添加闪卡」从任意文本生成）。 */
+/** 不挂在任何笔记下的独立闪卡（「添加闪卡」从任意文本生成）。 */
 export async function listOrphanCards(): Promise<Card[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -154,11 +158,20 @@ export async function listOrphanCards(): Promise<Card[]> {
   return (data ?? []) as Card[];
 }
 
-/** 从一组正面文字里挑出占比最高的语言（自动检测，测不出归「其他」）。 */
-function dominantLang(fronts: string[]): string {
+/**
+ * 从一组卡片里挑出占比最高的语言。优先用已存储的 `card.lang`（用户可修正），没存过的才动态检测。
+ * 中文与日语共用汉字：纯汉字日语词（日本語 / 勉強）会被 detectLang 误判成中文。
+ * 因此当「正面表决=中文」这种有歧义时，用笔记正文 contentText 二次确认是否其实是日语
+ * （正文含假名 / 助词 / 句子，比单个纯汉字词可靠）；泰 / 韩 / 假名脚本唯一，正面表决即准，
+ * 不做改写以免把外来文本带偏；正面完全测不出（全 other）时用正文兜底。
+ */
+function dominantLang(
+  cards: { front: string; back?: string | null; lang?: string | null }[],
+  contentText?: string | null
+): string {
   const counts = new Map<string, number>();
-  for (const f of fronts) {
-    const l = detectLang(f);
+  for (const card of cards) {
+    const l = cardLang(card);
     counts.set(l, (counts.get(l) ?? 0) + 1);
   }
   let best = "other";
@@ -170,6 +183,10 @@ function dominantLang(fronts: string[]): string {
       bestCount = n;
     }
   }
+  if (!contentText) return best;
+  const whole = detectLang(contentText);
+  if (best === "chinese" && whole === "japanese") return "japanese";
+  if (best === "other") return whole === "other" ? "other" : whole;
   return best;
 }
 
@@ -177,20 +194,24 @@ function dominantLang(fronts: string[]): string {
 export async function listCardGroups(): Promise<CardFolderGroup[]> {
   const supabase = await createClient();
 
-  // 1. 挂在笔记下的卡片，数出每个 note_id 有几张，并记下正面文字用来判断主要语言
+  // 1. 挂在笔记下的卡片，数出每个 note_id 有几张，并记下正/反面 + 已存的 lang 用来判断主要语言
   const { data: cardRows, error: err1 } = await supabase
     .from("cards")
-    .select("note_id, front")
+    .select("note_id, front, back, lang")
     .not("note_id", "is", null);
   if (err1) throw err1;
 
   const counts = new Map<string, number>();
-  const frontsByNote = new Map<string, string[]>();
+  const cardsByNote = new Map<string, { front: string; back: string | null; lang: string | null }[]>();
   for (const r of cardRows ?? []) {
     const id = r.note_id as string;
     counts.set(id, (counts.get(id) ?? 0) + 1);
-    if (!frontsByNote.has(id)) frontsByNote.set(id, []);
-    frontsByNote.get(id)!.push(r.front as string);
+    if (!cardsByNote.has(id)) cardsByNote.set(id, []);
+    cardsByNote.get(id)!.push({
+      front: r.front as string,
+      back: (r.back ?? null) as string | null,
+      lang: (r.lang ?? null) as string | null,
+    });
   }
   const noteIds = Array.from(counts.keys());
   if (noteIds.length === 0) return [];
@@ -198,7 +219,7 @@ export async function listCardGroups(): Promise<CardFolderGroup[]> {
   // 2. 这些笔记的标题 + 所属文件夹 + 来源类型（区分卡片文件）
   const { data: notes, error: err2 } = await supabase
     .from("notes")
-    .select("id, title, folder_id, source_type")
+    .select("id, title, folder_id, source_type, content_text")
     .in("id", noteIds);
   if (err2) throw err2;
 
@@ -236,7 +257,7 @@ export async function listCardGroups(): Promise<CardFolderGroup[]> {
       title: n.title,
       count: counts.get(n.id) ?? 0,
       sourceType: n.source_type ?? null,
-      lang: dominantLang(frontsByNote.get(n.id) ?? []),
+      lang: dominantLang(cardsByNote.get(n.id) ?? [], n.content_text),
     });
   }
 
@@ -263,7 +284,7 @@ export async function listReviewCards(
     .select("*")
     .order("position", { ascending: true })
     .order("created_at", { ascending: true });
-  // noteId 为空 = 只看独立卡片（不挂任何笔记）；否则只看某篇笔记
+  // noteId 为空 = 只看独立闪卡（不挂任何笔记）；否则只看某篇笔记
   if (noteId) q = q.eq("note_id", noteId);
   else q = q.is("note_id", null);
 
@@ -282,9 +303,10 @@ export async function listReviewCards(
   for (const s of states ?? []) stateMap.set(s.card_id, s as ReviewState);
 
   const now = Date.now();
-  // kind 为空 = 只看普通卡；否则只看「生词/例句」那一种。
-  // （kind 列还没建时，JS 里 c.kind 为 undefined，等同于普通卡，不会报错。）
-  const kindMatches = (c: Card) => (kind ? c.kind === kind : !c.kind);
+  // kind 为空 = 复习这个合集的全部卡（普通 / 生词 / 例句 / 语法都算，用户点「开始背诵」期望把整篇都过一遍）；
+  // 指定 kind 时只看那一种。改前 kind 为空只放行「普通卡」(!c.kind)，导致笔记转卡后全是 word/example/grammar，
+  // 点「开始背诵」一张都匹配不到 → 误显示「都复习完了」。
+  const kindMatches = (c: Card) => (kind ? c.kind === kind : true);
   return (cards as Card[])
     .filter((c) => {
       const s = stateMap.get(c.id);
@@ -295,7 +317,7 @@ export async function listReviewCards(
     .map((c) => ({ card: c, state: stateMap.get(c.id) ?? null }));
 }
 
-/** 待复习的一个「文件」（笔记 + 类别）及它的到期卡片数。noteId 为空表示独立卡片。 */
+/** 待复习的一个「文件」（笔记 + 类别）及它的到期卡片数。noteId 为空表示独立闪卡。 */
 export type DueFile = {
   noteId: string | null;
   kind: string | null;
@@ -357,7 +379,7 @@ export async function listDueFiles(): Promise<DueFile[]> {
   const files: DueFile[] = [];
   for (const e of byKey.values()) {
     const base =
-      e.noteId === null ? "独立卡片" : (titleMap.get(e.noteId) ?? "无标题");
+      e.noteId === null ? "独立闪卡" : (titleMap.get(e.noteId) ?? "无标题");
     const suffix =
       e.kind === "word" ? "生词" : e.kind === "example" ? "例句" : e.kind === "grammar" ? "语法" : "";
     files.push({
@@ -375,7 +397,9 @@ export async function getUserSettings(): Promise<UserSettings> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("user_settings")
-    .select("daily_goal, reminder_enabled, reminder_time, recognition_rules, hidden_themes")
+    .select(
+      "daily_goal, reminder_enabled, reminder_time, recognition_rules, hidden_themes, ai_text_provider, ai_speech_provider, ai_vision_provider"
+    )
     .limit(1)
     .maybeSingle();
   if (error) throw error;
@@ -385,6 +409,29 @@ export async function getUserSettings(): Promise<UserSettings> {
     reminder_time: data?.reminder_time ?? null,
     recognition_rules: (data?.recognition_rules ?? null) as UserSettings["recognition_rules"],
     hidden_themes: (data?.hidden_themes ?? []) as string[],
+    ai_text_provider: (data?.ai_text_provider ?? null) as string | null,
+    ai_speech_provider: (data?.ai_speech_provider ?? null) as string | null,
+    ai_vision_provider: (data?.ai_vision_provider ?? null) as string | null,
+  };
+}
+
+/** 只读当前用户的 AI 模型选择（三个任务各自的 provider），给 AI lib 内部路由用。
+ *  没录/出错都返回 null 三个，让调用方落回环境默认。 */
+export async function getUserAiProviders(): Promise<{
+  text: string | null;
+  speech: string | null;
+  vision: string | null;
+}> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("user_settings")
+    .select("ai_text_provider, ai_speech_provider, ai_vision_provider")
+    .limit(1)
+    .maybeSingle();
+  return {
+    text: (data?.ai_text_provider ?? null) as string | null,
+    speech: (data?.ai_speech_provider ?? null) as string | null,
+    vision: (data?.ai_vision_provider ?? null) as string | null,
   };
 }
 
@@ -445,7 +492,7 @@ export async function listDueCardsAll(): Promise<ReviewItem[]> {
     .map((c) => ({ card: c, state: stateMap.get(c.id) ?? null }));
 }
 
-/** 某个合集（笔记 + 类别，或独立卡片）里的全部卡片。noteId 为 null 表示独立卡片。 */
+/** 某个合集（笔记 + 类别，或独立闪卡）里的全部卡片。noteId 为 null 表示独立闪卡。 */
 export async function listCollectionCards(
   noteId: string | null,
   kind: string | null
@@ -555,7 +602,10 @@ export async function getReviewOverview(): Promise<ReviewOverview> {
   let todayReviewed = 0;
   for (const c of cards) {
     const s = stateMap.get(c.id);
-    if (!s) continue; // 没背过的卡不算「待复习」，也不计入已复习/已掌握/待加强
+    if (!s) {
+      due++; // 没背过的卡视为「待复习」——与下方各合集 due、listReviewCards 口径一致
+      continue; // 但仍不计入已复习/已掌握/待加强
+    }
     reviewed++;
     if (new Date(s.due_at).getTime() <= now) due++;
     if (s.interval_days >= 21 || (s.reps >= 3 && (s.last_rating ?? 0) >= 3)) mastered++;
@@ -598,7 +648,7 @@ export async function getReviewOverview(): Promise<ReviewOverview> {
   }
   const collections: CollectionSummary[] = Array.from(groupMap.values())
     .map((g) => {
-      const base = g.noteId === null ? "独立卡片" : (noteMap.get(g.noteId) ?? "无标题");
+      const base = g.noteId === null ? "独立闪卡" : (noteMap.get(g.noteId) ?? "无标题");
       const suffix = KIND_SUFFIX(g.kind);
       return {
         key: `${g.noteId ?? "orphans"}::${g.kind ?? ""}`,
@@ -641,13 +691,14 @@ export async function getReviewOverview(): Promise<ReviewOverview> {
   };
 }
 
-/** 所有「生词」卡（含所属笔记标题），词群页按语言 + 笔记归类用。 */
+/** 所有「可归类到词群主题」的卡（生词 + 例句，含所属笔记标题）。
+ *  词群页按主题分组用；现在生词、例句都按主题一起归，不再分成两类。 */
 export async function listWordCards(): Promise<CardWithNote[]> {
   const supabase = await createClient();
   const { data: cards, error } = await supabase
     .from("cards")
     .select("*")
-    .eq("kind", "word")
+    .in("kind", ["word", "example"])
     .order("position", { ascending: true })
     .order("created_at", { ascending: true });
   if (error) throw error;
@@ -677,14 +728,14 @@ export async function listWordCards(): Promise<CardWithNote[]> {
   });
 }
 
-/** 某个主题下的全部「生词」卡（测试用，不过滤到期）。 */
+/** 某个主题下的全部卡（生词 + 例句，测试用，不过滤到期）。 */
 export async function listThemeCards(themeKey: string): Promise<Card[]> {
   const supabase = await createClient();
   const [cardsRes, themesRes] = await Promise.all([
     supabase
       .from("cards")
       .select("*")
-      .eq("kind", "word")
+      .in("kind", ["word", "example"])
       .order("position", { ascending: true })
       .order("created_at", { ascending: true }),
     supabase.from("word_themes").select("*"),
@@ -696,14 +747,14 @@ export async function listThemeCards(themeKey: string): Promise<Card[]> {
   );
 }
 
-/** 某个主题下「到期」的生词卡 + 复习状态（背诵用，跟按笔记背诵同规则）。 */
+/** 某个主题下「到期」的卡（生词 + 例句）+ 复习状态（背诵用，跟按笔记背诵同规则）。 */
 export async function listThemeReviewItems(themeKey: string): Promise<ReviewItem[]> {
   const supabase = await createClient();
   const [cardsRes, themesRes] = await Promise.all([
     supabase
       .from("cards")
       .select("*")
-      .eq("kind", "word")
+      .in("kind", ["word", "example"])
       .order("position", { ascending: true })
       .order("created_at", { ascending: true }),
     supabase.from("word_themes").select("*"),
@@ -733,4 +784,121 @@ export async function listThemeReviewItems(themeKey: string): Promise<ReviewItem
       return new Date(s.due_at).getTime() <= now;
     })
     .map((c) => ({ card: c, state: stateMap.get(c.id) ?? null }));
+}
+
+// ============================================================
+// 素材库：素材 + 素材合集
+// ============================================================
+
+/** 所有素材合集（新建时间在前），照 listWordThemes。 */
+export async function listMaterialCollections(): Promise<MaterialCollection[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("material_collections")
+    .select("*")
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as MaterialCollection[];
+}
+
+/** 所有素材（时间倒序），并带上所属笔记标题（照 listWordCards 的 titleMap 合并）。 */
+export async function listMaterials(): Promise<MaterialWithNote[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("materials")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  const rows = (data ?? []) as Material[];
+
+  const noteIds = Array.from(
+    new Set(
+      rows
+        .map((m) => m.note_id)
+        .filter((x): x is string => Boolean(x))
+    )
+  );
+  const titleMap = new Map<string, string>();
+  if (noteIds.length > 0) {
+    const { data: notes } = await supabase
+      .from("notes")
+      .select("id, title")
+      .in("id", noteIds);
+    for (const n of notes ?? []) titleMap.set(n.id, n.title);
+  }
+  return rows.map((m) => ({
+    ...m,
+    note_title: m.note_id ? titleMap.get(m.note_id) ?? null : null,
+  }));
+}
+
+/** 找出这篇笔记「来自」的素材（反向：materials.note_id → 该笔记）。失败返回空数组，不打断打开笔记。 */
+export async function listSourceMaterials(noteId: string): Promise<SourceMaterial[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("materials")
+    .select("id,title,url")
+    .eq("note_id", noteId)
+    .order("created_at", { ascending: true })
+    .limit(10);
+  if (error) return [];
+  return (data ?? []) as SourceMaterial[];
+}
+
+/** 单条素材。没有返回 null（照 getCard 的容错）。 */
+export async function getMaterial(id: string): Promise<Material | null> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("materials")
+    .select("*")
+    .eq("id", id)
+    .single();
+  if (error || !data) return null;
+  return data as Material;
+}
+
+/** 单个素材合集。没有返回 null。 */
+export async function getMaterialCollection(id: string): Promise<MaterialCollection | null> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("material_collections")
+    .select("*")
+    .eq("id", id)
+    .single();
+  if (error || !data) return null;
+  return data as MaterialCollection;
+}
+
+/** 某个合集下的全部素材（时间倒序），带所属笔记标题（照 listMaterials 合并）。 */
+export async function listMaterialsByCollection(
+  collectionId: string
+): Promise<MaterialWithNote[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("materials")
+    .select("*")
+    .eq("collection_id", collectionId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  const rows = (data ?? []) as Material[];
+
+  const noteIds = Array.from(
+    new Set(
+      rows
+        .map((m) => m.note_id)
+        .filter((x): x is string => Boolean(x))
+    )
+  );
+  const titleMap = new Map<string, string>();
+  if (noteIds.length > 0) {
+    const { data: notes } = await supabase
+      .from("notes")
+      .select("id, title")
+      .in("id", noteIds);
+    for (const n of notes ?? []) titleMap.set(n.id, n.title);
+  }
+  return rows.map((m) => ({
+    ...m,
+    note_title: m.note_id ? titleMap.get(m.note_id) ?? null : null,
+  }));
 }

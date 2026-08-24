@@ -82,15 +82,9 @@ export default async function CardsPage({
 
   return (
     <div>
-      <header className="mb-5 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-900">闪卡</h1>
-          <p className="mt-1 text-sm text-zinc-500">按来源或按主题浏览、管理你的闪卡。</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <ExportCardsButton />
-          <AddCardsButton />
-        </div>
+      {/* 页头只留标题；「按来源/按主题」切换左对齐放在标题下方（与素材页 Tab 同侧） */}
+      <header className="page-header mb-5">
+        <h1 className="text-2xl font-bold text-zinc-900">闪卡</h1>
       </header>
 
       <ViewSwitch view={view} />
@@ -100,15 +94,31 @@ export default async function CardsPage({
           {activeError}
         </div>
       ) : totalNotes === 0 && orphans.length === 0 ? (
-        <EmptyState
-          icon={<Layers className="h-10 w-10" />}
-          title="还没有闪卡"
-          description="在笔记里点「⋯ → 转成闪卡」自动生成，或点右上角「＋ 添加闪卡」粘贴内容。"
-        />
+        <>
+          {/* 空态也要保留「添加闪卡」，因为此时最需要它 */}
+          <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+            <ExportCardsButton />
+            <AddCardsButton />
+          </div>
+          <EmptyState
+            icon={<Layers className="h-10 w-10" />}
+            title="还没有闪卡"
+            description="在笔记里点「⋯ → 转成闪卡」自动生成，或点右上角「＋ 添加闪卡」粘贴内容。"
+          />
+        </>
       ) : view === "theme" ? (
         <GroupBrowser cards={wordCards} themes={themes} hiddenThemes={hiddenThemes} />
       ) : (
-        <CardsView groups={groups} orphans={orphans} />
+        <CardsView
+          groups={groups}
+          orphans={orphans}
+          actions={
+            <>
+              <ExportCardsButton />
+              <AddCardsButton />
+            </>
+          }
+        />
       )}
     </div>
   );

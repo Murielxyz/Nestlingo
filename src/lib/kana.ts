@@ -41,3 +41,8 @@ export function katakanaRuns(line: string): { start: number; end: number }[] {
   }
   return runs;
 }
+
+/** 是否含日语假名（ひらがな / カタカナ）——用于判断一段文字是不是日文正文。 */
+export function hasKana(s: string): boolean {
+  return /[぀-ヿ]/.test(s);
+}

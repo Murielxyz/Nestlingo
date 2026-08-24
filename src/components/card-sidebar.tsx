@@ -3,11 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { Layers, Pencil, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { detectCardLang, cardLang, LANG_LABEL, LANG_ORDER, type Lang } from "@/lib/lang-detect";
 import type { Card } from "@/lib/types";
+import { CardFront } from "./card-front";
 
 const KIND_LABEL: Record<string, string> = {
   word: "生词",
   example: "例句",
+  grammar: "语法",
 };
 
 /**
@@ -27,10 +30,11 @@ export function CardSidebar({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [front, setFront] = useState("");
   const [back, setBack] = useState("");
+  const [lang, setLang] = useState<Lang>("other");
   const [addOpen, setAddOpen] = useState(false);
   const [newFront, setNewFront] = useState("");
   const [newBack, setNewBack] = useState("");
-  const [kindFilter, setKindFilter] = useState<"all" | "word" | "example">("all");
+  const [kindFilter, setKindFilter] = useState<"all" | "word" | "example" | "grammar">("all");
 
   const load = useCallback(async () => {
     const supabase = createClient();
@@ -51,6 +55,7 @@ export function CardSidebar({
     setEditingId(c.id);
     setFront(c.front);
     setBack(c.back ?? "");
+    setLang(cardLang(c));
   }
 
   async function saveEdit() {
@@ -58,7 +63,7 @@ export function CardSidebar({
     const supabase = createClient();
     const { error } = await supabase
       .from("cards")
-      .update({ front: front.trim(), back: back.trim() })
+      .update({ front: front.trim(), back: back.trim(), lang })
       .eq("id", editingId);
     if (!error) {
       setEditingId(null);
@@ -67,7 +72,7 @@ export function CardSidebar({
   }
 
   async function deleteCard(id: string) {
-    if (!window.confirm("删除这张卡片？")) return;
+    if (!window.confirm("删除这张闪卡？")) return;
     const supabase = createClient();
     const { error } = await supabase.from("cards").delete().eq("id", id);
     if (!error) load();
@@ -79,7 +84,12 @@ export function CardSidebar({
     const supabase = createClient();
     const { error } = await supabase
       .from("cards")
-      .insert({ note_id: noteId, front: newFront.trim(), back: newBack.trim() });
+      .insert({
+        note_id: noteId,
+        front: newFront.trim(),
+        back: newBack.trim(),
+        lang: detectCardLang({ front: newFront.trim(), back: newBack.trim() }),
+      });
     if (!error) {
       setNewFront("");
       setNewBack("");
@@ -88,14 +98,20 @@ export function CardSidebar({
     }
   }
 
-  const wordCount = (cards ?? []).filter((c) => c.kind === "word").length;
-  const exampleCount = (cards ?? []).filter((c) => c.kind === "example").length;
-  const hasKinds = wordCount > 0 || exampleCount > 0;
+  // 三种类型的计数 + 过滤标签（生词 / 例句 / 语法），哪类有卡就显示哪类 tab。
+  const kindCounts = ({ word: 0, example: 0, grammar: 0 } as Record<string, number>);
+  for (const c of cards ?? []) {
+    if (c.kind && c.kind in kindCounts) kindCounts[c.kind]++;
+  }
+  const kinds: { key: "word" | "example" | "grammar"; label: string }[] = [
+    { key: "word", label: "生词" },
+    { key: "example", label: "例句" },
+    { key: "grammar", label: "语法" },
+  ];
+  const presentKinds = kinds.filter((k) => kindCounts[k.key] > 0);
+  const hasKinds = presentKinds.length > 0;
   const effectiveFilter =
-    (kindFilter === "word" && wordCount === 0) ||
-    (kindFilter === "example" && exampleCount === 0)
-      ? "all"
-      : kindFilter;
+    kindFilter !== "all" && kindCounts[kindFilter] === 0 ? "all" : kindFilter;
   const visibleCards = (cards ?? []).filter(
     (c) => effectiveFilter === "all" || c.kind === effectiveFilter
   );
@@ -120,8 +136,7 @@ export function CardSidebar({
         <div className="flex flex-wrap gap-1 border-b border-zinc-200 bg-white px-2 py-1.5">
           {[
             { key: "all" as const, label: "全部", count: cards?.length ?? 0 },
-            ...(wordCount > 0 ? [{ key: "word" as const, label: "生词", count: wordCount }] : []),
-            ...(exampleCount > 0 ? [{ key: "example" as const, label: "例句", count: exampleCount }] : []),
+            ...presentKinds.map((k) => ({ key: k.key, label: k.label, count: kindCounts[k.key] })),
           ].map((t) => (
             <button
               key={t.key}
@@ -220,6 +235,20 @@ export function CardSidebar({
                   rows={2}
                   className="w-full rounded-lg border border-zinc-200 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
                 />
+                <div className="flex items-center gap-2 text-sm">
+                  <label className="shrink-0 text-xs text-zinc-400">语言</label>
+                  <select
+                    value={lang}
+                    onChange={(e) => setLang(e.target.value as Lang)}
+                    className="rounded-lg border border-zinc-200 px-2 py-1 text-sm focus:border-teal-500 focus:outline-none"
+                  >
+                    {LANG_ORDER.map((l) => (
+                      <option key={l} value={l}>
+                        {LANG_LABEL[l]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div className="flex gap-3 text-sm">
                   <button onClick={saveEdit} className="text-teal-600 hover:text-teal-700">
                     保存
@@ -239,7 +268,7 @@ export function CardSidebar({
               >
                 <div className="flex items-start justify-between gap-2">
                   <p className="whitespace-pre-wrap text-sm font-medium text-zinc-900">
-                    {c.front}
+                    <CardFront text={c.front} reading={c.reading} />
                   </p>
                   <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                     <button

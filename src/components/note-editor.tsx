@@ -445,7 +445,7 @@ export function NoteEditor({
             showCards ? "min-w-0 flex-1 overflow-y-auto" : "flex flex-1 justify-center"
           }
         >
-          <div className="mx-auto flex w-full max-w-3xl flex-col">
+          <div className="mx-auto flex w-full max-w-3xl flex-col md:max-w-4xl xl:max-w-5xl">
             {editorPane}
           </div>
         </div>

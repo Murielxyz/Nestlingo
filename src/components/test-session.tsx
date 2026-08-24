@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import { FileText, PartyPopper, Smile, Activity } from "lucide-react";
 import type { Card } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
 import { SpeakButton } from "./speak-button";
+import { cardLang } from "@/lib/lang-detect";
+import { BackButton } from "./back-button";
 
 type Question = {
   card: Card;
@@ -40,7 +41,6 @@ function buildQuestions(pool: Card[], limit: number): Question[] {
  */
 export function TestSession({
   cards,
-  title,
   backHref,
   limit = 20,
 }: {
@@ -122,16 +122,16 @@ export function TestSession({
     return (
       <div className="mx-auto max-w-xl rounded-2xl border border-zinc-200 bg-white px-6 py-16 text-center">
         <FileText className="h-10 w-10 text-zinc-300" />
-        <p className="mt-4 text-lg font-semibold text-zinc-900">没有可测试的卡片</p>
+        <p className="mt-4 text-lg font-semibold text-zinc-900">没有可测试的闪卡</p>
         <p className="mt-1 text-sm text-zinc-500">
-          需要卡片同时有正面和背面（答案）才能出题。
+          需要闪卡同时有正面和背面（答案）才能出题。
         </p>
-        <Link
-          href={backHref}
+        <BackButton
+          fallback={backHref}
           className="mt-6 inline-block rounded-lg bg-teal-600 px-5 py-2 text-sm font-semibold text-white hover:bg-teal-700"
         >
           返回
-        </Link>
+        </BackButton>
       </div>
     );
   }
@@ -162,12 +162,12 @@ export function TestSession({
             >
               再来一次
             </button>
-            <Link
-              href={backHref}
+            <BackButton
+              fallback={backHref}
               className="flex-1 rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-50"
             >
               返回
-            </Link>
+            </BackButton>
           </div>
         </div>
 
@@ -180,7 +180,7 @@ export function TestSession({
               {wrongList.map((wq, i) => (
                 <li key={i} className="rounded-xl border border-zinc-200 bg-white p-3">
                   <div className="flex items-center justify-end gap-2">
-                    <SpeakButton text={wq.card.front} />
+                    <SpeakButton text={wq.card.front} lang={cardLang(wq.card)} />
                   </div>
                   <p className="mt-1 text-sm font-medium text-zinc-900">{wq.card.front}</p>
                   <p className="mt-0.5 whitespace-pre-wrap text-sm text-emerald-700">
@@ -216,7 +216,7 @@ export function TestSession({
           <p className="whitespace-pre-wrap text-2xl font-semibold leading-relaxed text-zinc-900">
             {q.card.front}
           </p>
-          <SpeakButton text={q.card.front} />
+          <SpeakButton text={q.card.front} lang={cardLang(q.card)} />
         </div>
 
         <div className="mt-5 space-y-2">

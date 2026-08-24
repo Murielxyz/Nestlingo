@@ -27,8 +27,8 @@ export default async function NoteCardsPage({
   return (
     <div>
       {/* 原路返回 + 查看原始笔记 / 开始背诵 */}
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <BackButton />
+      <header className="page-header mb-4 flex items-center justify-between gap-3">
+        <BackButton fallback="/cards" />
         <div className="flex items-center gap-4">
           {note.source_type !== "cards" && (
             <Link
@@ -41,7 +41,7 @@ export default async function NoteCardsPage({
           )}
           {cards.length > 0 && (
             <Link
-              href={`/review?note=${id}`}
+              href={`/review?note=${id}&back=${encodeURIComponent(`/notes/${id}/cards`)}`}
               className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-3.5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
             >
               <RefreshCw className="h-4 w-4" />
@@ -49,7 +49,7 @@ export default async function NoteCardsPage({
             </Link>
           )}
         </div>
-      </div>
+      </header>
 
       {error ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">

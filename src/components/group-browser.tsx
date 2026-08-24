@@ -3,12 +3,14 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Tag, Plus, Sparkles, X, Trash2, Check } from "lucide-react";
+import { Tag, Plus, Sparkles, X, Trash2, Check, Search, MoreHorizontal, Download } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { exportCardsCsv } from "@/lib/export-data";
 import type { CardWithNote, WordTheme } from "@/lib/types";
-import { detectLang, LANG_LABEL, type Lang } from "@/lib/lang-detect";
+import { cardLang, LANG_LABEL, LANG_COLOR, type Lang } from "@/lib/lang-detect";
 import { themeMeta, themeOf } from "@/lib/word-themes";
+import { listImportableCollections, type ImportableCollection } from "@/lib/import-collections";
 
 const LANG_ORDER: Lang[] = ["thai", "korean", "chinese", "japanese", "other"];
 
@@ -57,6 +59,7 @@ export function GroupBrowser({
   const [clusterError, setClusterError] = useState<string | null>(null);
   const [batchMode, setBatchMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState("");
 
   // 各语言标签的数字 = 能归类到某个主题（场景）的生词数，而不是全部生词；
   // 归类不到的（"其他"）不计入，跟下方主题卡片一致。
@@ -64,7 +67,7 @@ export function GroupBrowser({
     const m = new Map<Lang, number>();
     for (const c of cards) {
       if (themeOfVisible(c, userThemes, hidden) === "other") continue;
-      const l = detectLang(c.front);
+      const l = cardLang(c);
       m.set(l, (m.get(l) ?? 0) + 1);
     }
     return m;
@@ -76,7 +79,7 @@ export function GroupBrowser({
   );
 
   const visible =
-    filter === "all" ? cards : cards.filter((c) => detectLang(c.front) === filter);
+    filter === "all" ? cards : cards.filter((c) => cardLang(c) === filter);
 
   // 按「单词相关性」分组（内置主题优先，再查用户分类），并隐藏「其他」。
   const groups = useMemo<ThemeGroup[]>(() => {
@@ -104,6 +107,23 @@ export function GroupBrowser({
 
   const presentLangs = LANG_ORDER.filter((l) => (counts.get(l) ?? 0) > 0);
   const allSelected = groups.length > 0 && groups.every((g) => selected.has(g.key));
+
+  // 搜索：按主题名 / 卡面文字过滤（命中主题名→保留整组；否则看卡里文字）。
+  const q = query.trim().toLowerCase();
+  const searchedGroups = useMemo<ThemeGroup[]>(() => {
+    if (!q) return groups;
+    return groups
+      .map((g) => {
+        if (g.label.toLowerCase().includes(q)) return g;
+        const matched = g.cards.filter(
+          (c) =>
+            c.front.toLowerCase().includes(q) ||
+            (c.back ?? "").toLowerCase().includes(q)
+        );
+        return matched.length ? { ...g, cards: matched } : null;
+      })
+      .filter(Boolean) as ThemeGroup[];
+  }, [groups, q]);
 
   async function runCluster() {
     setClustering(true);
@@ -159,6 +179,8 @@ export function GroupBrowser({
     const builtinKeys = keys.filter((k) => themeMeta(k) !== null);
 
     if (customKeys.length > 0) {
+      // 先清掉这些分类下卡片的 theme 标记：删了分类后这些卡才不会冒出「裸UUID」鬼分组。
+      await supabase.from("cards").update({ theme: null }).in("theme", customKeys);
       const { error } = await supabase
         .from("word_themes")
         .delete()
@@ -184,78 +206,121 @@ export function GroupBrowser({
     router.refresh();
   }
 
+  // 单个主题卡片的「删除」：自定义分类删行并清卡片 theme；内置主题改成「隐藏」。
+  async function deleteTheme(key: string, isCustom: boolean, label: string) {
+    const supabase = createClient();
+    if (isCustom) {
+      if (
+        !window.confirm(`删除分类「${label}」？里面的词会回到「未分类」，不会被删除。`)
+      ) {
+        return;
+      }
+      await supabase.from("cards").update({ theme: null }).eq("theme", key);
+      const { error } = await supabase.from("word_themes").delete().eq("id", key);
+      if (!error) {
+        setUserThemes((prev) => prev.filter((t) => t.id !== key));
+      }
+    } else {
+      if (
+        !window.confirm(
+          `删除分类「${label}」？它会在闪卡页里消失，里面的词回到「未分类」，词不会被删除。`
+        )
+      ) {
+        return;
+      }
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) {
+        const next = Array.from(new Set([...hidden, key]));
+        setHidden(next);
+        await supabase
+          .from("user_settings")
+          .upsert({ user_id: user.id, hidden_themes: next }, { onConflict: "user_id" });
+      }
+    }
+    router.refresh();
+  }
+
   return (
     <div>
-      {/* AI 智能整理 */}
-      {!batchMode && (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <button
-            onClick={runCluster}
-            disabled={clustering}
-            className="inline-flex items-center gap-1.5 rounded-full bg-teal-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700 disabled:opacity-60"
-          >
-            <Sparkles className="h-4 w-4" />
-            {clustering ? "AI 整理中…" : "AI 智能整理"}
-          </button>
-        </div>
-      )}
       {clusterError && (
         <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           {clusterError}
         </p>
       )}
 
-      {/* 语言标签 + 批量操作 / 新建分类 */}
-      <div className="mb-5 flex flex-wrap items-center gap-1.5">
+      {/* 搜索 + 操作按钮：手机端上下堆叠，桌面端同一行（搜索左、按钮右）；语言标签另起一行 */}
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative w-full sm:max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索主题 / 词…"
+            className="w-full rounded-xl border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm focus:border-teal-500 focus:outline-none"
+          />
+        </div>
+        {/* 次级工具栏：AI 智能整理 / 批量操作（默认样式）+ 新建分类（绿色主按钮，最右）——与按来源一致 */}
+        {!batchMode && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={runCluster}
+              disabled={clustering}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-60"
+            >
+              <Sparkles className="h-4 w-4" />
+              {clustering ? "AI 整理中…" : "AI 智能整理"}
+            </button>
+            <button
+              onClick={() => setCreating((v) => !v)}
+              className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
+            >
+              <Plus className="h-4 w-4" />
+              新建分类
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 语言标签（与按来源一致：非活跃按各自语言色显示、选中态 teal 白字） */}
+      <div className="mb-5 flex flex-wrap items-center gap-2">
         <button
           onClick={() => setFilter("all")}
-          className={`rounded-full px-3.5 py-1.5 text-sm transition-colors ${
+          className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
             filter === "all"
-              ? "bg-teal-600 font-semibold text-white"
-              : "border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+              ? "bg-teal-600 text-white"
+              : "border border-zinc-200 text-zinc-500 hover:bg-zinc-50"
           }`}
         >
-          全部 {totalClassified}
+          全部语言
         </button>
         {presentLangs.map((l) => (
           <button
             key={l}
             onClick={() => setFilter(l)}
-            className={`rounded-full px-3.5 py-1.5 text-sm transition-colors ${
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
               filter === l
-                ? "bg-teal-600 font-semibold text-white"
-                : "border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+                ? "bg-teal-600 text-white"
+                : `${LANG_COLOR[l]} border border-transparent hover:opacity-80`
             }`}
           >
-            {LANG_LABEL[l]} {counts.get(l)}
+            {LANG_LABEL[l]}
           </button>
         ))}
-        <div className="ml-auto flex items-center gap-1.5">
-          <button
-            onClick={toggleBatch}
-            className={`rounded-full px-3.5 py-1.5 text-sm transition-colors ${
-              batchMode
-                ? "bg-teal-600 font-semibold text-white"
-                : "border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
-            }`}
-          >
-            {batchMode ? "完成" : "批量操作"}
-          </button>
-          {!batchMode && (
-            <button
-              onClick={() => setCreating((v) => !v)}
-              className="inline-flex items-center gap-1 rounded-full border border-teal-200 px-3 py-1.5 text-sm font-medium text-teal-600 transition-colors hover:bg-teal-50"
-            >
-              <Plus className="h-4 w-4" />
-              新建分类
-            </button>
-          )}
-        </div>
+        <button
+          onClick={toggleBatch}
+          className={`ml-auto text-xs font-medium transition-colors ${
+            batchMode ? "text-teal-600" : "text-zinc-400 hover:text-teal-600"
+          }`}
+        >
+          {batchMode ? "退出批量" : "批量操作"}
+        </button>
       </div>
 
       {cards.length - totalClassified > 0 && (
         <p className="-mt-3 mb-4 text-xs text-zinc-400">
-          还有 {cards.length - totalClassified} 个词没归类到任何主题。
+          还有 {cards.length - totalClassified} 条没归类到任何主题。
         </p>
       )}
 
@@ -278,46 +343,52 @@ export function GroupBrowser({
             </button>
             <span className="text-sm text-zinc-500">已选 {selected.size} 个分类</span>
           </div>
-          <button
-            onClick={batchDelete}
-            disabled={selected.size === 0}
-            className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
-          >
-            <Trash2 className="h-4 w-4" />
-            删除所选
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={batchDelete}
+              disabled={selected.size === 0}
+              className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+            >
+              <Trash2 className="h-4 w-4" />
+              删除所选
+            </button>
+            <button
+              onClick={toggleBatch}
+              className="rounded-lg px-3 py-1.5 text-sm text-zinc-500 transition-colors hover:bg-zinc-100"
+            >
+              完成
+            </button>
+          </div>
         </div>
       )}
 
       {/* 主题卡片网格 */}
-      {groups.length === 0 ? (
+      {searchedGroups.length === 0 ? (
         <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-500">
-          这个语言下还没有能归类到主题的生词。
+          {q ? "没有匹配的主题或词。" : "这个语言下还没有能归类到主题的生词。"}
         </div>
       ) : (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {groups.map((g) => {
+          {searchedGroups.map((g) => {
             const body = (
-              <div className="flex items-start gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-teal-50">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-50">
                   {(() => {
                     const Icon = g.icon ?? Tag;
-                    return <Icon className="h-5 w-5 text-teal-600" />;
+                    return <Icon className="h-4 w-4 text-teal-600" />;
                   })()}
                 </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold text-zinc-800">
-                    {g.label}
-                  </span>
-                  <span className="mt-0.5 block text-xs text-zinc-400">
-                    {g.cards.length} 词
-                  </span>
+                <span className="min-w-0 flex-1 truncate text-sm font-medium leading-snug text-zinc-800">
+                  {g.label}
+                </span>
+                <span className="shrink-0 rounded-full bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-600">
+                  {g.cards.length} 条
                 </span>
               </div>
             );
             return (
               <li key={g.key}>
-                <div className="card-soft flex h-full flex-col overflow-hidden">
+                <div className="flex h-full flex-col rounded-2xl border border-zinc-200 bg-white transition-colors hover:border-teal-300 hover:shadow-sm">
                   {batchMode ? (
                     <button
                       type="button"
@@ -337,26 +408,16 @@ export function GroupBrowser({
                     </button>
                   ) : (
                     <Link
-                      href={`/groups/${g.key}`}
-                      className="flex flex-1 flex-col p-4 transition-colors hover:bg-teal-50/40"
+                      href={`/groups/${g.key}${filter !== "all" ? `?lang=${filter}` : ""}`}
+                      className="flex flex-1 flex-col p-4"
                     >
                       {body}
                     </Link>
                   )}
                   {!batchMode && (
-                    <div className="flex gap-2 border-t border-zinc-100 p-2">
-                      <Link
-                        href={`/review?theme=${g.key}`}
-                        className="flex-1 rounded-lg bg-teal-600 px-3 py-1.5 text-center text-sm font-semibold text-white transition-colors hover:bg-teal-700"
-                      >
-                        背
-                      </Link>
-                      <Link
-                        href={`/review?theme=${g.key}&mode=test`}
-                        className="flex-1 rounded-lg border border-teal-200 px-3 py-1.5 text-center text-sm font-semibold text-teal-600 transition-colors hover:bg-teal-50"
-                      >
-                        测
-                      </Link>
+                    <div className="flex items-center justify-between border-t border-zinc-100 px-3 py-1.5">
+                      <ThemeCardMenu onDelete={() => deleteTheme(g.key, g.isCustom, g.label)} />
+                      <ThemeExportButton cards={g.cards} label={g.label} />
                     </div>
                   )}
                 </div>
@@ -364,6 +425,69 @@ export function GroupBrowser({
             );
           })}
         </ul>
+      )}
+    </div>
+  );
+}
+
+/** 导出某个主题下的全部生词为 CSV。 */
+function ThemeExportButton({ cards, label }: { cards: CardWithNote[]; label: string }) {
+  const [busy, setBusy] = useState(false);
+
+  function exportOne() {
+    setBusy(true);
+    try {
+      exportCardsCsv(cards, `${label}.csv`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      onClick={exportOne}
+      disabled={busy}
+      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-60"
+    >
+      <Download className="h-3.5 w-3.5" />
+      {busy ? "导出中…" : "导出"}
+    </button>
+  );
+}
+
+/** 主题卡片的「⋯」菜单：删除分类（内置主题→隐藏、自定义分类→删除，统一「删除」措辞）。 */
+function ThemeCardMenu({ onDelete }: { onDelete: () => void }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
+        aria-label="更多操作"
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+      {open && (
+        <>
+          <button
+            className="fixed inset-0 z-10 cursor-default"
+            onClick={() => setOpen(false)}
+            aria-label="关闭菜单"
+          />
+          <div className="absolute bottom-full left-0 z-20 mb-1 w-32 overflow-hidden rounded-lg border border-zinc-200 bg-white py-1 shadow-lg">
+            <button
+              onClick={() => {
+                setOpen(false);
+                onDelete();
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              删除分类
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
@@ -383,6 +507,12 @@ function NewThemeForm({
   const [busy, setBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 「从合集导入」（可选）：新建分类时顺手把某篇笔记的生词+例句一起收进来。
+  const [importOpen, setImportOpen] = useState(false);
+  const [collections, setCollections] = useState<ImportableCollection[]>([]);
+  const [colLoading, setColLoading] = useState(false);
+  const [colQuery, setColQuery] = useState("");
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
 
   async function aiFill() {
     const n = name.trim();
@@ -416,6 +546,37 @@ function NewThemeForm({
     }
   }
 
+  async function loadCollections() {
+    setColLoading(true);
+    try {
+      const list = await listImportableCollections();
+      setCollections(list);
+    } catch {
+      setCollections([]);
+    } finally {
+      setColLoading(false);
+    }
+  }
+
+  function toggleCollection(noteId: string) {
+    setSelectedNoteIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(noteId)) next.delete(noteId);
+      else next.add(noteId);
+      return next;
+    });
+  }
+
+  const filteredCollections = useMemo(() => {
+    const q = colQuery.trim().toLowerCase();
+    if (!q) return collections;
+    return collections.filter(
+      (col) =>
+        col.title.toLowerCase().includes(q) ||
+        col.cards.some((c) => c.front.toLowerCase().includes(q))
+    );
+  }, [collections, colQuery]);
+
   async function create() {
     const n = name.trim();
     const kw = keywords
@@ -434,28 +595,46 @@ function NewThemeForm({
       .insert({ name: n, keywords: kw })
       .select()
       .single();
-    setBusy(false);
     if (error || !data) {
+      setBusy(false);
       setError(error?.message ?? "创建失败");
       return;
     }
-    onCreated(data as WordTheme);
+    const newTheme = data as WordTheme;
+    // 顺手把所选合集的 生词+例句 一起收进这个新分类。
+    if (selectedNoteIds.size > 0) {
+      const ids = collections
+        .filter((c) => selectedNoteIds.has(c.noteId))
+        .flatMap((c) => c.cards.map((card) => card.id));
+      if (ids.length > 0) {
+        await supabase.from("cards").update({ theme: newTheme.id }).in("id", ids);
+      }
+    }
+    setBusy(false);
+    onCreated(newTheme);
     onClose();
     router.refresh();
   }
 
   return (
-    <div className="card-soft mb-5 p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-zinc-800">新建分类</h3>
-        <button
-          onClick={onClose}
-          className="rounded-lg px-2 py-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-          aria-label="关闭"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-base font-semibold text-zinc-900">新建分类</h3>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            aria-label="关闭"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
 
       <input
         value={name}
@@ -480,6 +659,74 @@ function NewThemeForm({
         </button>
       </div>
 
+      {/* 可选：从合集导入——new分类时把某篇笔记的生词+例句一起收进来 */}
+      <div className="mt-3">
+        <button
+          type="button"
+          onClick={() => {
+            const next = !importOpen;
+            setImportOpen(next);
+            if (next && collections.length === 0) void loadCollections();
+          }}
+          className="text-xs font-medium text-zinc-500 transition-colors hover:text-teal-600"
+        >
+          {importOpen ? "▾ 收起「从合集导入」" : "＋ 从合集导入（可选）"}
+        </button>
+
+        {importOpen && (
+          <div className="mt-2">
+            {selectedNoteIds.size > 0 && (
+              <p className="mb-1.5 text-[11px] text-teal-600">
+                {(() => {
+                  const cnt = collections
+                    .filter((c) => selectedNoteIds.has(c.noteId))
+                    .reduce((s, c) => s + c.cards.length, 0);
+                  return `将随分类一起收录 ${selectedNoteIds.size} 个合集 / ${cnt} 条`;
+                })()}
+              </p>
+            )}
+            <div className="relative mb-2">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+              <input
+                value={colQuery}
+                onChange={(e) => setColQuery(e.target.value)}
+                placeholder="搜索笔记标题 / 词面…"
+                className="w-full rounded-lg border border-zinc-200 py-1.5 pl-8 pr-3 text-xs focus:border-teal-500 focus:outline-none"
+              />
+            </div>
+            {colLoading ? (
+              <p className="py-3 text-center text-xs text-zinc-400">加载中…</p>
+            ) : filteredCollections.length === 0 ? (
+              <p className="py-3 text-center text-xs text-zinc-400">
+                没有可导入的合集（有生词/例句的笔记）。
+              </p>
+            ) : (
+              <div className="max-h-40 space-y-1 overflow-y-auto">
+                {filteredCollections.map((col) => (
+                  <label
+                    key={col.noteId}
+                    className="flex items-center gap-2 rounded-md border border-zinc-100 px-2 py-1.5 hover:bg-zinc-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedNoteIds.has(col.noteId)}
+                      onChange={() => toggleCollection(col.noteId)}
+                      className="h-3.5 w-3.5 shrink-0 accent-teal-600"
+                    />
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-700">
+                      {col.title}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-zinc-400">
+                      {col.cards.length} 条
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
 
       <div className="mt-4 flex justify-end gap-2">
@@ -496,6 +743,7 @@ function NewThemeForm({
         >
           {busy ? "创建中…" : "创建分类"}
         </button>
+        </div>
       </div>
     </div>
   );

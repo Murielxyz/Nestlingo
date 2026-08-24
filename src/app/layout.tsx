@@ -31,10 +31,14 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#4c8c7c",
+  themeColor: "#fafbfa",
   width: "device-width",
   initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
   viewportFit: "cover",
+  // 键盘弹起时保持布局视口不变（只缩放可视视口），sticky 工具栏才不会跟着被顶上去
+  interactiveWidget: "resizes-visual",
 };
 
 export default function RootLayout({
