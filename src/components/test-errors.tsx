@@ -5,13 +5,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Play, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { cardLang, LANG_LABEL, LANG_COLOR, type Lang } from "@/lib/lang-detect";
+import { cardLang, LANG_ORDER, LANG_LABEL, LANG_COLOR, type Lang } from "@/lib/lang-detect";
 import type { ReviewItem } from "@/lib/supabase/queries";
 import { ReviewSession } from "./review-session";
 import { CardFront } from "./card-front";
 import { SpeakButton } from "./speak-button";
-
-const LANG_ORDER: Lang[] = ["thai", "korean", "chinese", "japanese", "other"];
 
 /**
  * 错题集：测试里选错的卡。按语言筛选（自动检测）、开始背、清空。

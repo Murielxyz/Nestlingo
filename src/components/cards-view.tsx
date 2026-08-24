@@ -20,10 +20,8 @@ import {
   X,
   Search,
 } from "lucide-react";
-import { cardLang, LANG_LABEL, LANG_COLOR, type Lang } from "@/lib/lang-detect";
+import { cardLang, LANG_ORDER, LANG_LABEL, LANG_COLOR, type Lang } from "@/lib/lang-detect";
 import type { Card, CardFolderGroup } from "@/lib/types";
-
-const LANG_ORDER: Lang[] = ["thai", "korean", "chinese", "japanese", "other"];
 
 /** 一个「闪卡合集」：某篇笔记（含闪卡文件）下的全部卡，附上它所在的文件夹 + 主要语言。 */
 type Collection = {

@@ -8,11 +8,9 @@ import type { LucideIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { exportCardsCsv } from "@/lib/export-data";
 import type { CardWithNote, WordTheme } from "@/lib/types";
-import { cardLang, LANG_LABEL, LANG_COLOR, type Lang } from "@/lib/lang-detect";
+import { cardLang, LANG_ORDER, LANG_LABEL, LANG_COLOR, type Lang } from "@/lib/lang-detect";
 import { themeMeta, themeOf } from "@/lib/word-themes";
 import { listImportableCollections, type ImportableCollection } from "@/lib/import-collections";
-
-const LANG_ORDER: Lang[] = ["thai", "korean", "chinese", "japanese", "other"];
 
 /** 用户隐藏（删除）的主题 key 视作「未归类」，不再参与分组。 */
 function themeOfVisible(

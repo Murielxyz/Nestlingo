@@ -14,7 +14,7 @@ import {
   friendlyQueryError,
 } from "@/lib/supabase/queries";
 import { themeLabelOf } from "@/lib/word-themes";
-import { cardLang, LANG_LABEL, LANG_COLOR, type Lang } from "@/lib/lang-detect";
+import { cardLang, LANG_ORDER, LANG_LABEL, LANG_COLOR, type Lang } from "@/lib/lang-detect";
 import type { WordTheme } from "@/lib/types";
 import { ReviewSession } from "@/components/review-session";
 import { ClozeSession } from "@/components/cloze-session";
@@ -39,8 +39,6 @@ function parseKind(k?: string): string | null {
 function kindSuffixOf(k?: string | null): string {
   return k && KIND_LABEL[k] ? ` · ${KIND_LABEL[k]}` : "";
 }
-
-const LANG_ORDER: Lang[] = ["thai", "korean", "chinese", "japanese", "other"];
 
 /** 综合测试里实际出现的语言（按正面文字自动检测，去重、固定顺序）。 */
 function presentLangsOf(cards: { front: string; back?: string | null; lang?: string | null }[]): Lang[] {
