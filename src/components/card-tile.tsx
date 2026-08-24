@@ -22,6 +22,7 @@ export function CardTile({
   onToggleSelect,
   footer,
   menu = true,
+  menuItems,
 }: {
   card: Card;
   /** 选择模式（批量）：卡面变成点选，右侧出勾选框；关闭「⋯」菜单。 */
@@ -30,8 +31,10 @@ export function CardTile({
   onToggleSelect?: () => void;
   /** 底部左侧操作区（来源：提示文字 / 主题：「移出」按钮）。默认给翻面提示。 */
   footer?: ReactNode;
-  /** 是否显示右上角「⋯」菜单（编辑 / 删除）。主题页传 false，改用 footer 的「移出」。 */
+  /** 是否显示右上角「⋯」菜单。默认菜单项为「编辑 / 删除」。 */
   menu?: boolean;
+  /** 自定义菜单项，传了则替换默认的「编辑 / 删除」（如主题页只给「移出」）。 */
+  menuItems?: { label: string; onClick: () => void; danger?: boolean }[];
 }) {
   const router = useRouter();
   const [flipped, setFlipped] = useState(false);
@@ -236,24 +239,43 @@ export function CardTile({
                 onClick={() => setMenuOpen(false)}
               />
               <div className="absolute right-0 top-full z-20 mt-1 w-28 overflow-hidden rounded-lg border border-zinc-200 bg-white py-1 text-sm shadow-lg">
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    setEditing(true);
-                  }}
-                  className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-zinc-700 hover:bg-zinc-50"
-                >
-                  <Pencil className="h-3.5 w-3.5" /> 编辑
-                </button>
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    deleteCard();
-                  }}
-                  className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-red-600 hover:bg-red-50"
-                >
-                  <Trash2 className="h-3.5 w-3.5" /> 删除
-                </button>
+                {menuItems ? (
+                  menuItems.map((it) => (
+                    <button
+                      key={it.label}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        it.onClick();
+                      }}
+                      className={`flex w-full items-center gap-1.5 px-3 py-1.5 text-left ${
+                        it.danger ? "text-red-600 hover:bg-red-50" : "text-zinc-700 hover:bg-zinc-50"
+                      }`}
+                    >
+                      {it.label}
+                    </button>
+                  ))
+                ) : (
+                  <>
+                    <button
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setEditing(true);
+                      }}
+                      className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-zinc-700 hover:bg-zinc-50"
+                    >
+                      <Pencil className="h-3.5 w-3.5" /> 编辑
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMenuOpen(false);
+                        deleteCard();
+                      }}
+                      className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-red-600 hover:bg-red-50"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> 删除
+                    </button>
+                  </>
+                )}
               </div>
             </>
           )}

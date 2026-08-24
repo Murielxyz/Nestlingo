@@ -167,15 +167,8 @@ export function ThemeDetail({
             <li key={c.id}>
               <CardTile
                 card={c}
-                menu={false}
-                footer={
-                  <button
-                    onClick={() => remove(c.id)}
-                    className="rounded-lg px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600"
-                  >
-                    移出
-                  </button>
-                }
+                menu={true}
+                menuItems={[{ label: "移出", onClick: () => remove(c.id) }]}
               />
             </li>
           ))}

@@ -18,14 +18,14 @@ import type { Card, CardFolderGroup } from "@/lib/types";
 
 type View = "source" | "theme";
 
-/** 顶部「按来源 / 按主题」切换：用链接 + 查询参数切换，可分享、可从详情页退回。 */
+/** 顶部「按来源 / 按主题」切换：全宽分段控件（两端均分），用链接 + 查询参数切换，可分享、可从详情页退回。 */
 function ViewSwitch({ view }: { view: View }) {
   const tab = (active: boolean) =>
-    `inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-      active ? "bg-teal-600 text-white shadow-sm" : "text-zinc-500 hover:text-zinc-900"
+    `flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
+      active ? "bg-white text-teal-700 shadow-sm" : "text-zinc-500 hover:text-zinc-800"
     }`;
   return (
-    <div className="mb-5 inline-flex items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1">
+    <div className="mb-5 flex w-full items-stretch gap-0.5 rounded-xl bg-black/[0.05] p-1">
       <Link href="/cards" className={tab(view === "source")}>
         <Layers className="h-4 w-4" />
         按来源

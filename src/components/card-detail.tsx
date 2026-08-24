@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FileText, Pencil, Sparkles, Trash2 } from "lucide-react";
+import { FileText, Pencil, Sparkles } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { cardLang, LANG_LABEL, LANG_ORDER, type Lang } from "@/lib/lang-detect";
 import type { Card } from "@/lib/types";
@@ -11,6 +11,7 @@ import { CardBack } from "./card-back";
 import { CardFront } from "./card-front";
 import { SpeakButton } from "./speak-button";
 import { BackButton } from "./back-button";
+import { RowMenu } from "./row-menu";
 
 const KIND_LABEL: Record<string, string> = {
   word: "生词",
@@ -102,6 +103,9 @@ export function CardDetail({
             {KIND_LABEL[card.kind] ?? card.kind}
           </span>
         )}
+        <RowMenu
+          items={[{ label: "删除", onClick: deleteCard, danger: true }]}
+        />
       </header>
 
       {editing ? (
@@ -210,13 +214,6 @@ export function CardDetail({
             >
               <Pencil className="h-4 w-4" />
               编辑
-            </button>
-            <button
-              onClick={deleteCard}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-200 px-4 py-2 text-sm text-red-600 transition-colors hover:bg-red-50"
-            >
-              <Trash2 className="h-4 w-4" />
-              删除
             </button>
           </div>
         </>

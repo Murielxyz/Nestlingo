@@ -1,5 +1,6 @@
 import { getUserSettings, friendlyQueryError } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
+import { ChevronDown } from "lucide-react";
 import { SettingsForm, LogoutButton } from "@/components/settings-form";
 import { RecognitionRulesForm } from "@/components/recognition-rules-form";
 import { AiModelForm } from "@/components/ai-model-form";
@@ -88,12 +89,22 @@ export default async function SettingsPage() {
 
         <SettingsForm initial={settings} />
 
-        <Section
-          title="闪卡识别规则"
-          description="粘贴表格转成闪卡时，用哪些表头关键词识别「正面 / 背面 / 读音 / 拓展」。选个预设或自己填。"
-        >
-          <RecognitionRulesForm initial={settings.recognition_rules} />
-        </Section>
+        {/* 识别规则是进阶低频项：默认收起的「高级」折叠面板，避免设置页一开始就塞满。 */}
+        <details className="card-soft group p-5">
+          <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-semibold text-zinc-900 [&::-webkit-details-marker]:hidden">
+            <span>
+              闪卡识别规则
+              <span className="ml-1.5 text-xs font-normal text-zinc-400">高级</span>
+            </span>
+            <ChevronDown className="h-4 w-4 text-zinc-400 transition-transform group-open:rotate-180" />
+          </summary>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            粘贴表格转成闪卡时，用哪些表头关键词识别「正面 / 背面 / 读音 / 拓展」。选个预设或自己填。
+          </p>
+          <div className="mt-4">
+            <RecognitionRulesForm initial={settings.recognition_rules} />
+          </div>
+        </details>
 
         <Section
           title="AI 模型"

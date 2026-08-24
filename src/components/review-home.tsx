@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FlaskConical, Play, FolderOpen, Sparkles, BookX } from "lucide-react";
+import { FlaskConical, Play, FolderOpen, Sparkles, BookX, MoreHorizontal } from "lucide-react";
 import type { ReviewStats, CollectionSummary } from "@/lib/types";
 import type { ReviewItem } from "@/lib/supabase/queries";
 import { SpeakButton } from "./speak-button";
@@ -90,6 +90,7 @@ export function ReviewHome({
     }
   }, [collections, current]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // 「到期待复习」只看「正在背的合集」里的新旧待复习卡（不数全局，避免随新卡越积越多）。
   const statCards = [
@@ -149,28 +150,49 @@ export function ReviewHome({
                 <Play className="h-4 w-4" />
                 继续背
               </Link>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div className="flex items-stretch gap-2">
                 <Link
                   href={collectionHref(current, "test")}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-teal-200 px-4 py-2 text-sm font-semibold text-teal-600 transition-colors hover:bg-teal-50"
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-teal-200 px-4 py-2 text-sm font-semibold text-teal-600 transition-colors hover:bg-teal-50"
                 >
                   <FlaskConical className="h-4 w-4" />
                   测试
                 </Link>
-                <Link
-                  href={collectionHref(current, "cloze")}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-teal-200 px-4 py-2 text-sm font-semibold text-teal-600 transition-colors hover:bg-teal-50"
-                >
-                  <Sparkles className="h-4 w-4" />
-                  完形填空
-                </Link>
-                <Link
-                  href={collectionHref(current, "story")}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-teal-200 px-4 py-2 text-sm font-semibold text-teal-600 transition-colors hover:bg-teal-50"
-                >
-                  <Sparkles className="h-4 w-4" />
-                  故事模式
-                </Link>
+                <div className="relative flex flex-1">
+                  <button
+                    onClick={() => setMoreOpen((v) => !v)}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                    更多练习
+                  </button>
+                  {moreOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-30"
+                        onClick={() => setMoreOpen(false)}
+                      />
+                      <div className="absolute left-0 right-0 top-full z-40 mt-1 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-lg">
+                        <Link
+                          href={collectionHref(current, "cloze")}
+                          onClick={() => setMoreOpen(false)}
+                          className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-700 transition-colors hover:bg-zinc-50"
+                        >
+                          <Sparkles className="h-4 w-4" />
+                          完形填空
+                        </Link>
+                        <Link
+                          href={collectionHref(current, "story")}
+                          onClick={() => setMoreOpen(false)}
+                          className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-700 transition-colors hover:bg-zinc-50"
+                        >
+                          <Sparkles className="h-4 w-4" />
+                          故事模式
+                        </Link>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           </div>
