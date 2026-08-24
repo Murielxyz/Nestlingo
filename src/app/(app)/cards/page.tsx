@@ -12,6 +12,7 @@ import { ExportCardsButton } from "@/components/export-cards-button";
 import { CardsView } from "@/components/cards-view";
 import { GroupBrowser } from "@/components/group-browser";
 import { EmptyState } from "@/components/empty-state";
+import { PageHeader } from "@/components/page-header";
 import { Layers, Tags } from "lucide-react";
 import type { Card, CardFolderGroup } from "@/lib/types";
 
@@ -83,9 +84,7 @@ export default async function CardsPage({
   return (
     <div>
       {/* 页头只留标题；「按来源/按主题」切换左对齐放在标题下方（与素材页 Tab 同侧） */}
-      <header className="page-header mb-5">
-        <h1 className="text-2xl font-bold text-zinc-900">闪卡</h1>
-      </header>
+      <PageHeader title="闪卡" />
 
       <ViewSwitch view={view} />
 

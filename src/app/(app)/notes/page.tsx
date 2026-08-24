@@ -30,7 +30,7 @@ export default async function NotesPage() {
       {/* 手机端：文件夹 + 笔记列表（正常点开进入对应页面）。 */}
       <div className="md:hidden">
         {/* 标题吸顶（与全局顶部安全区对齐），不再随内容滚动，也不再因 py-6 留下顶部空隙。 */}
-        <header className="sticky top-0 z-20 border-b border-zinc-200 bg-white px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
+        <header className="sticky top-0 z-20 border-b border-black/5 bg-white/70 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-md">
           <h1 className="text-2xl font-bold text-zinc-900">笔记</h1>
         </header>
 

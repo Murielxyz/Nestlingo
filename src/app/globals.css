@@ -12,8 +12,8 @@
 
   /* 页面背景：顶部两角淡绿径向渐变 + paper 底色（body 与吸顶标题栏共用，保证融合） */
   --page-bg:
-    radial-gradient(1200px 600px at 100% -10%, var(--brand-soft-2), transparent 60%),
-    radial-gradient(1000px 500px at -10% 0%, var(--brand-soft), transparent 55%),
+    radial-gradient(1100px 520px at 50% -12%, var(--brand-soft), transparent 62%),
+    radial-gradient(900px 460px at 108% -6%, var(--brand-soft-2), transparent 58%),
     var(--paper);
 
   --background: var(--paper);
@@ -32,6 +32,14 @@
   --color-teal-700: oklch(0.52 0.09 165);
   --color-teal-800: oklch(0.44 0.08 165);
   --color-teal-900: oklch(0.36 0.07 165);
+
+  /* 圆角统一到 iOS 观感：按钮/chip 12px、卡片/弹窗 16px、底部弹层顶部 20px */
+  --radius-sm: 0.5rem; /* 8px */
+  --radius-md: 0.625rem; /* 10px */
+  --radius-lg: 0.75rem; /* 12px ← 主用 */
+  --radius-xl: 0.875rem; /* 14px */
+  --radius-2xl: 1rem; /* 16px ← 卡片/弹窗 */
+  --radius-3xl: 1.25rem; /* 20px ← 底部弹层顶部 */
 }
 
 @theme inline {
@@ -43,18 +51,22 @@
   --color-brand-soft-2: var(--brand-soft-2);
   --color-ink: var(--ink);
   --color-paper: var(--paper);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Helvetica Neue", "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans Thai", "Apple SD Gothic Neo",
+    "Malgun Gothic", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas,
+    "Liberation Mono", monospace;
 }
 
 body {
   background: var(--page-bg);
   background-attachment: fixed;
   color: var(--ink);
-  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont,
-    "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
-    "Noto Sans CJK SC", "Noto Sans Thai", "Apple SD Gothic Neo",
-    "Malgun Gothic", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Helvetica Neue", "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans Thai",
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
 }
 
 /* 防 iOS Safari 双击/捏合缩放：双击不放大、输入框聚焦不自动放大 */
@@ -164,7 +176,7 @@ body {
 .tiptap code {
   background: #f4f4f5;
   padding: 0.1em 0.3em;
-  border-radius: 4px;
+  border-radius: 6px;
   font-size: 0.9em;
 }
 .tiptap mark {
@@ -222,7 +234,7 @@ ruby.furigana rt {
   display: block;
   max-width: 100%;
   height: auto;
-  border-radius: 8px;
+  border-radius: 10px;
   margin: 0.5em 0;
 }
 .tiptap hr {
@@ -294,7 +306,7 @@ ruby.furigana rt {
   margin: 0.5em 0;
   padding: 0.5rem 0.75rem;
   border: 1px dashed #e4e4e7;
-  border-radius: 8px;
+  border-radius: 10px;
 }
 .tiptap [data-column] {
   min-width: 0;
@@ -302,7 +314,7 @@ ruby.furigana rt {
 
 /* ===== callout（生词 = 奶油金 / 例句 = 鼠尾草绿 / 语法 = 薰衣草紫 / 原文 = 灰，奶油粉彩低饱和配色） ===== */
 .tiptap .callout {
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 0.45rem 0.75rem;
   margin: 0.75em 0;
 }
@@ -360,7 +372,7 @@ ruby.furigana rt {
   gap: 2px;
   padding: 0 5px;
   border: none;
-  border-radius: 5px;
+  border-radius: 8px;
   background: transparent;
   font-size: 11px;
   line-height: 1.6;
@@ -432,7 +444,7 @@ ruby.furigana rt {
 .share-content code {
   background: rgba(128, 128, 128, 0.18);
   padding: 0.1em 0.3em;
-  border-radius: 4px;
+  border-radius: 6px;
   font-size: 0.9em;
 }
 .share-content mark {
@@ -451,7 +463,7 @@ ruby.furigana rt {
 .share-content img {
   max-width: 100%;
   height: auto;
-  border-radius: 8px;
+  border-radius: 10px;
   margin: 0.5em 0;
 }
 .share-content hr {
@@ -495,7 +507,7 @@ ruby.furigana rt {
   padding-left: 1.5rem;
 }
 .share-content .callout {
-  border-radius: 8px;
+  border-radius: 10px;
   border: 1px solid currentColor;
   padding: 0.4rem 0.6rem;
   margin: 0.5em 0;

@@ -176,7 +176,7 @@ export function AppShell({
       {/* ===== 主内容区（移动端底部让出导航 + 底部安全区；顶部让出状态栏安全区） ===== */}
       <main className={`transition-[padding] duration-200 ${collapsed ? "md:pl-14" : "md:pl-64"} ${hasStickyHeader ? "" : "pt-[max(1rem,env(safe-area-inset-top))]"} ${isNoteDetail || isReviewSession ? "pb-0" : "pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0"}`}>
         {isNotes ? (
-          <div className="min-h-screen bg-white">{children}</div>
+          <div className="min-h-screen">{children}</div>
         ) : (
           <div className="mx-auto max-w-5xl px-4 md:px-8 py-6">{children}</div>
         )}

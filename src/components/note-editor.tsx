@@ -266,12 +266,12 @@ export function NoteEditor({
     <div
       className={
         showCards
-          ? "flex h-screen flex-col overflow-hidden bg-white"
-          : "flex min-h-screen flex-col bg-white"
+          ? "flex h-screen flex-col overflow-hidden"
+          : "flex min-h-screen flex-col"
       }
     >
       {/* ===== 顶部：返回 + 菜单 + 完成 ===== */}
-      <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-zinc-200 bg-white/95 px-3 pt-[max(0.5rem,env(safe-area-inset-top))] py-2 backdrop-blur md:px-4">
+      <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-black/5 bg-white/70 px-3 pt-[max(0.5rem,env(safe-area-inset-top))] py-2 backdrop-blur-md md:px-4">
         <BackButton
           fallback={backHref}
           forceFallback
