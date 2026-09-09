@@ -2,14 +2,11 @@
 // 拆成结构化卡片。免费、离线、即时，作为 AI 识别的兜底。
 
 import { HR_TEXT } from "@/lib/doc-to-text";
-import { detectLang } from "@/lib/lang-detect";
 import type { RecognitionRules, SplitRule } from "@/lib/types";
 
 export interface ParsedCard {
   front: string;
   back: string;
-  /** 读音（罗马音/拼音/音标），从表格「读音」列或行内「（读音）」里抽出；最后按设置并入正面或背面。 */
-  hint?: string;
   /** 由自定义分隔规则命中的卡片类型（生词/例句/语法）；普通卡片没有。 */
   kind?: "word" | "example" | "grammar";
 }
@@ -78,7 +75,7 @@ function parseTable(lines: string[], delim: string, rules?: RecognitionRules | n
 
   return dataRows
     .map((cols) => {
-      const front = (cols[frontIdx] ?? "").trim();
+      let front = (cols[frontIdx] ?? "").trim();
       let back: string;
       if (backIdx === -1) {
         back = cols
@@ -88,42 +85,20 @@ function parseTable(lines: string[], delim: string, rules?: RecognitionRules | n
       } else {
         back = (cols[backIdx] ?? "").trim();
       }
+      // 读音列（hint）放背面顶部，格式与 AI 解释一致「读音：xxx」。
+      // 当没有「释义」列时（backIdx===-1），读音列已随其它列并入 back，无需另处理。
       const hint = hintIdx >= 0 ? cols[hintIdx]?.trim() : "";
+      if (hint && backIdx !== -1) {
+        back = back ? `读音：${hint}\n${back}` : `读音：${hint}`;
+      }
+      // 拓展列（例句/补充等）每项另起一行接在背面后面
       const extras = extraIdxs
         .map((i) => cols[i]?.trim())
         .filter(Boolean);
-      // 读音（hint）单独存，最后按设置放到正面或背面。
-      // 拓展列（例句/补充等）每项另起一行接在背面后面
       for (const e of extras) back = back ? `${back}\n${e}` : e;
-      return { front, back: back.trim(), hint: hint || undefined };
+      return { front, back: back.trim() };
     })
     .filter((c) => c.front || c.back);
-}
-
-/** 从一段文字里把「（拉丁罗马音）」抽出来；只认拉丁字母开头的括号内容，避免把中文释义误当读音。 */
-function extractParenHint(text: string): { rest: string; hint: string } {
-  const m = text.match(/[(（]\s*([A-Za-z][A-Za-zÀ-ɏ̀-ͯ\s'\-]*)\s*[)）]/);
-  if (!m) return { rest: text, hint: "" };
-  const hint = m[1].replace(/\s+/g, " ").trim();
-  const rest = (text.slice(0, m.index!) + " " + text.slice(m.index! + m[0].length))
-    .replace(/\s+/g, " ")
-    .trim();
-  return { rest, hint };
-}
-
-/** 按脚本把「拉丁罗马音」从「非拉丁（泰/中/日等）文字」里抽出来，用于「词  读音  释义」这种中间裸读音。 */
-function extractReadingByScript(text: string): { rest: string; hint: string } {
-  if (!/[A-Za-z]/.test(text)) return { rest: text, hint: "" };
-  const tokens = text.match(/[A-Za-zÀ-ɏ̀-ͯ'\-]+|[^A-Za-zÀ-ɏ̀-ͯ'\-]+/g) ?? [];
-  const latin: string[] = [];
-  const rest: string[] = [];
-  for (const t of tokens) {
-    if (/[A-Za-z]/.test(t)) latin.push(t);
-    else if (t.trim()) rest.push(t.trim());
-  }
-  const hint = latin.join(" ").replace(/\s+/g, " ").trim();
-  if (!hint) return { rest: text, hint: "" };
-  return { rest: rest.join(" ").replace(/\s+/g, " ").trim(), hint };
 }
 
 /** 反面正文的「分句/换行」规则：按分号分句、按两个及以上空格换行（都可开关）。 */
@@ -138,30 +113,9 @@ function normalizeBack(back: string, rules?: RecognitionRules | null): string {
   return parts.map((p) => p.trim()).filter(Boolean).join("\n");
 }
 
-/** 组装一张卡，并把读音抽成 hint（放正面还是背面由设置决定）。 */
+/** 组装一张卡：正面反面完全按输入原样保留（所见即所得），不再自动抽取/搬移读音。 */
 function makeCard(front: string, back: string): ParsedCard {
-  front = front.trim();
-  back = back.trim();
-  let card: ParsedCard;
-  const fp = extractParenHint(front);
-  if (fp.hint) {
-    card = { front: fp.rest, back, hint: fp.hint };
-  } else {
-    const bp = extractParenHint(back);
-    if (bp.hint) {
-      card = { front, back: bp.rest, hint: bp.hint };
-    } else if (/[【】]/.test(back)) {
-      // 背面已带【读音】标记（如「搜索【kát săn】」）：按默认规则原样保留，不再拆。
-      card = { front, back };
-    } else if (detectLang(front) !== "other") {
-      // 泰/中/日等非拉丁语种的生词，背面若混着「拉丁读音 + 非拉丁释义」，把拉丁部分抽成读音。
-      const sb = extractReadingByScript(back);
-      card = sb.hint ? { front, back: sb.rest, hint: sb.hint } : { front, back };
-    } else {
-      card = { front, back };
-    }
-  }
-  return card;
+  return { front: front.trim(), back: back.trim() };
 }
 
 /** 一条自定义分隔规则是否在当前解析范围内生效。 */
@@ -230,18 +184,22 @@ function splitLine(
     const [f, ...rest] = line.split("\t");
     return makeCard(f, rest.join(" "));
   }
-  // 「词：释义」/「词: 释义」
-  const colon = line.match(/^(.+?)\s*[:：]\s*(.+)$/);
-  if (colon) return makeCard(colon[1], colon[2]);
-  // 「词 - 释义」/「词 — 释义」（连字符前后带空格，避免误拆英文连字符词）
-  const dash = line.match(/^(.+?)\s+[-—–]\s+(.+)$/);
-  if (dash) return makeCard(dash[1], dash[2]);
-  // 「词—释义」（破折号无空格）
-  const emdash = line.match(/^(.+?)\s*[—–]\s*(.+)$/);
-  if (emdash) return makeCard(emdash[1], emdash[2]);
-  // 「词  释义」（两个及以上空格）
-  const spaces = line.match(/^(.+?)\s{2,}(.+)$/);
-  if (spaces) return makeCard(spaces[1], spaces[2]);
+  // 「词：释义」「词 - 释义」「词  释义」等：按**行内首次出现**的分隔符切正反面。
+  // 谁先出现谁就是主分隔符——「词  释义  搭配：xxx」里背面「搭配：」的冒号更靠后，
+  // 不会抢先把「搭配」吸进正面；正面只留词、背面留「释义 + 搭配」标签（背诵时标签照常展示）。
+  const seps: { at: number; front: string; back: string }[] = [];
+  const colon = line.match(/^(.+?)\s*[:：]\s*(.+)$/); // 「词：释义」/「词: 释义」
+  if (colon) seps.push({ at: colon[1].length, front: colon[1], back: colon[2] });
+  const dash = line.match(/^(.+?)\s+[-—–]\s+(.+)$/); // 「词 - 释义」（连字符前后带空格，避免误拆英文连字符词）
+  if (dash) seps.push({ at: dash[1].length, front: dash[1], back: dash[2] });
+  const emdash = line.match(/^(.+?)\s*[—–]\s*(.+)$/); // 「词—释义」（破折号无空格）
+  if (emdash) seps.push({ at: emdash[1].length, front: emdash[1], back: emdash[2] });
+  const spaces = line.match(/^(.+?)\s{2,}(.+)$/); // 「词  释义」（两个及以上空格）
+  if (spaces) seps.push({ at: spaces[1].length, front: spaces[1], back: spaces[2] });
+  if (seps.length > 0) {
+    const best = seps.reduce((a, b) => (b.at < a.at ? b : a));
+    return makeCard(best.front, best.back);
+  }
   return null;
 }
 
@@ -267,22 +225,6 @@ export interface ParseOptions {
    * everywhere（默认，不分区的粘贴）/ callout（彩色区块内）/ plain（正文）。
    */
   scope?: "everywhere" | "callout" | "plain";
-}
-
-/** 把抽出来的读音按设置放回正面（词（读音））或背面（另起一行【读音】），并先做背面分句/换行。 */
-function applyReading(card: ParsedCard, rules?: RecognitionRules | null): ParsedCard {
-  card.back = normalizeBack(card.back, rules);
-  const hint = (card.hint ?? "").trim();
-  if (!hint) return card;
-  const position = rules?.reading ?? "back";
-  if (position === "front") {
-    card.front = card.front ? `${card.front}（${hint}）` : hint;
-  } else {
-    // 背面：第一行【读音】，第二行才是释义。
-    card.back = card.back ? `【${hint}】\n${card.back}` : `【${hint}】`;
-  }
-  card.hint = undefined;
-  return card;
 }
 
 /** 入口：文本 → 卡片数组。rules 为用户自定义识别规则（可选）。 */
@@ -327,22 +269,35 @@ export function parseCards(
   } else {
     const lines = rawLines.filter(Boolean);
 
-    // 表格：逗号分隔且每行列数一致（≥2）。只在第一行能识别成表头时才当表格，
-    // 避免把带逗号的普通正文（尤其两栏原文/译文）误拆成卡片。
-    const colCounts = lines.map((l) => l.split(",").length);
-    if (colCounts[0] >= 2 && colCounts.every((n) => n === colCounts[0])) {
-      const headerRoles = lines[0].split(",").map((h) => classifyHeader(h, rules));
-      if (headerRoles.some((r) => r !== null)) {
-        cards = parseTable(lines, ",", rules);
-      } else {
-        cards = parseLines(lines, rules, bareToCard, scope);
+    // 逗号表格：把「连续含逗号（≥2 列）的行」当作候选表格块，块首行能被识别成表头角色才当表格解析；
+    // 其它行（表格上方的说明文字、普通正文）逐行按「词—释义」处理。
+    // 不再要求整块每行列数一致——列数不齐的行 parseTable 用空串兜底，避免一条标题行 / 含逗号单元格就整张拒掉。
+    const results: ParsedCard[] = [];
+    let tableBlock: string[] = [];
+    const flushBlock = () => {
+      if (tableBlock.length > 0) {
+        const firstCols = tableBlock[0].split(",");
+        const headerRoles = firstCols.map((h) => classifyHeader(h, rules));
+        if (firstCols.length >= 2 && headerRoles.some((r) => r !== null)) {
+          results.push(...parseTable(tableBlock, ",", rules));
+        } else {
+          results.push(...parseLines(tableBlock, rules, bareToCard, scope));
+        }
+        tableBlock = [];
       }
-    } else {
-      // 逐行：「词 — 释义」「词：释义」
-      cards = parseLines(lines, rules, bareToCard, scope);
+    };
+    for (const line of lines) {
+      if (line.split(",").length >= 2) {
+        tableBlock.push(line);
+      } else {
+        flushBlock();
+        if (line) results.push(...parseLines([line], rules, bareToCard, scope));
+      }
     }
+    flushBlock();
+    cards = results;
   }
 
-  // 把抽出来的读音按设置放回正面或背面。
-  return cards.map((c) => applyReading(c, rules));
+  // 反面做分句/换行（所见即所得：正面不再抽走/挪动读音）。
+  return cards.map((c) => ({ ...c, back: normalizeBack(c.back, rules) }));
 }

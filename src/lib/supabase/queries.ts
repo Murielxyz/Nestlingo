@@ -20,6 +20,21 @@ import type {
 } from "@/lib/types";
 import { themeOf } from "@/lib/word-themes";
 import { detectLang, cardLang } from "@/lib/lang-detect";
+import { cached } from "./query-cache";
+
+/**
+ * 按「用户 + 查询名 + 参数」做短 TTL 缓存（见 query-cache.ts），
+ * 让每次导航重复渲染的服务端查询命中缓存、不再打 Supabase。
+ * 缓存命中时内部那些 createClient() 完全不执行，只留一次本地 getSession（解码 JWT，无网络）。
+ */
+async function qcached<T>(name: string, args: unknown[], fn: () => Promise<T>): Promise<T> {
+  const supabase = await createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const uid = session?.user?.id ?? "anon";
+  return cached(`q:${uid}:${name}:${JSON.stringify(args ?? [])}`, fn);
+}
 
 /** 待复习的一张卡 + 它已有的复习状态（没复习过为 null）。 */
 export type ReviewItem = {
@@ -63,65 +78,116 @@ export function friendlyQueryError(err: unknown): string {
 }
 
 export async function listFolders(): Promise<Folder[]> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("folders")
-    .select("id, name, parent_id, position, color, created_at, updated_at")
-    .order("position", { ascending: true })
-    .order("created_at", { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as Folder[];
+  return qcached("listFolders", [], async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("folders")
+      .select("id, name, parent_id, position, color, created_at, updated_at")
+      .order("position", { ascending: true })
+      .order("created_at", { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as Folder[];
+  });
 }
 
 /** 列出笔记；传 folderId 则只看某个文件夹里的。 */
 export async function listNotes(folderId?: string | null): Promise<Note[]> {
-  const supabase = await createClient();
-  let query = supabase
-    .from("notes")
-    .select("id, folder_id, title, content_text, source_type, created_at, updated_at")
-    // 卡片文件（「添加闪卡」生成的空笔记）只在卡片页/复习页出现，不在笔记列表里占位
-    .is("source_type", null)
-    .order("updated_at", { ascending: false });
-  if (folderId) {
-    query = query.eq("folder_id", folderId);
-  }
-  const { data, error } = await query;
-  if (error) throw error;
-  return (data ?? []) as Note[];
+  return qcached("listNotes", [folderId ?? null], async () => {
+    const supabase = await createClient();
+    // 置顶的笔记浮到最前，其余按更新时间倒序。
+    const base = (withPinned: boolean) => {
+      let q = supabase
+        .from("notes")
+        .select(
+          withPinned
+            ? "id, folder_id, title, content_text, source_type, created_at, updated_at, pinned"
+            : "id, folder_id, title, content_text, source_type, created_at, updated_at"
+        )
+        // 卡片文件（「添加闪卡」生成的空笔记）只在卡片页/复习页出现，不在笔记列表里占位
+        .is("source_type", null);
+      if (folderId) q = q.eq("folder_id", folderId);
+      return q;
+    };
+
+    // 优先按「置顶优先」排序；若库还没加 pinned 列（未跑 schema 迁移），PostgREST 报
+    // 42703 (column does not exist)，退回纯按更新时间倒序，不让整页「读取失败」。
+    const tryPinned = base(true).order("pinned", { ascending: false }).order("updated_at", { ascending: false });
+    const res = await tryPinned;
+    if (!res.error) return withCardCounts(res.data ?? []);
+    if (res.error.code !== "42703" && !/does not exist|undefined_column/i.test(res.error.message ?? "")) {
+      throw res.error;
+    }
+
+    const fallback = await base(false).order("updated_at", { ascending: false });
+    if (fallback.error) throw fallback.error;
+    return withCardCounts(fallback.data ?? []);
+  });
 }
 
-export async function getNote(id: string): Promise<Note | null> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("notes")
-    .select("*")
-    .eq("id", id)
-    .single();
-  if (error) return null;
-  return data as Note;
-}
-
-export async function getFolder(id: string): Promise<Folder | null> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("folders")
-    .select("*")
-    .eq("id", id)
-    .single();
-  if (error) return null;
-  return data as Folder;
-}
-
-export async function listCards(noteId: string): Promise<Card[]> {
+/** 给一批笔记附上各自的闪卡数（有卡才 >0，列表里显示小标识）。查不到就按 0，不打断列表。 */
+async function withCardCounts(rows: unknown[]): Promise<Note[]> {
+  const notes = rows as Note[];
+  const ids = notes.map((n) => n.id);
+  if (ids.length === 0) return notes;
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("cards")
-    .select("*")
-    .eq("note_id", noteId)
-    .order("position", { ascending: true })
-    .order("created_at", { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as Card[];
+    .select("note_id")
+    .in("note_id", ids);
+  if (error || !data) return notes;
+  const counts = new Map<string, number>();
+  for (const r of data) {
+    const id = r.note_id as string;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return notes.map((n) => ({ ...n, cardCount: counts.get(n.id) ?? 0 }));
+}
+
+/** 取一篇笔记作为「闪卡合集」显示的标题：合集单独改过名（cards_title）就用它，否则回退到笔记标题。 */
+export function noteDisplayTitle(
+  note: { title: string; cards_title?: string | null } | null | undefined
+): string {
+  return (note?.cards_title ?? note?.title ?? "").trim();
+}
+
+export async function getNote(id: string): Promise<Note | null> {
+  return qcached("getNote", [id], async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("notes")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw error;
+    return data as Note;
+  });
+}
+
+export async function getFolder(id: string): Promise<Folder | null> {
+  return qcached("getFolder", [id], async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("folders")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw error;
+    return data as Folder;
+  });
+}
+
+export async function listCards(noteId: string): Promise<Card[]> {
+  return qcached("listCards", [noteId], async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("cards")
+      .select("*")
+      .eq("note_id", noteId)
+      .order("position", { ascending: true })
+      .order("created_at", { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as Card[];
+  });
 }
 
 /** 单张卡片 + 它所属笔记的标题（单卡详情页用）。没有这张卡返回 null。 */
@@ -131,16 +197,18 @@ export async function getCard(id: string): Promise<CardWithNote | null> {
     .from("cards")
     .select("*")
     .eq("id", id)
-    .single();
-  if (error || !data) return null;
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
 
   let note_title: string | null = null;
   if (data.note_id) {
-    const { data: n } = await supabase
+    const { data: n, error: nerr } = await supabase
       .from("notes")
       .select("title")
       .eq("id", data.note_id)
-      .single();
+      .maybeSingle();
+    if (nerr) throw nerr;
     note_title = n?.title ?? null;
   }
   return { ...(data as Card), note_title };
@@ -148,14 +216,16 @@ export async function getCard(id: string): Promise<CardWithNote | null> {
 
 /** 不挂在任何笔记下的独立闪卡（「添加闪卡」从任意文本生成）。 */
 export async function listOrphanCards(): Promise<Card[]> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("cards")
-    .select("*")
-    .is("note_id", null)
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return (data ?? []) as Card[];
+  return qcached("listOrphanCards", [], async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("cards")
+      .select("*")
+      .is("note_id", null)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return (data ?? []) as Card[];
+  });
 }
 
 /**
@@ -192,17 +262,19 @@ function dominantLang(
 
 /** 卡片页的分组索引：把卡片按「文件夹 → 笔记」聚合，返回每个笔记下的卡片数 + 主要语言。 */
 export async function listCardGroups(): Promise<CardFolderGroup[]> {
+  return qcached("listCardGroups", [], async () => {
   const supabase = await createClient();
 
   // 1. 挂在笔记下的卡片，数出每个 note_id 有几张，并记下正/反面 + 已存的 lang 用来判断主要语言
   const { data: cardRows, error: err1 } = await supabase
     .from("cards")
-    .select("note_id, front, back, lang")
+    .select("id, note_id, front, back, lang")
     .not("note_id", "is", null);
   if (err1) throw err1;
 
   const counts = new Map<string, number>();
   const cardsByNote = new Map<string, { front: string; back: string | null; lang: string | null }[]>();
+  const idsByNote = new Map<string, string[]>();
   for (const r of cardRows ?? []) {
     const id = r.note_id as string;
     counts.set(id, (counts.get(id) ?? 0) + 1);
@@ -212,14 +284,34 @@ export async function listCardGroups(): Promise<CardFolderGroup[]> {
       back: (r.back ?? null) as string | null,
       lang: (r.lang ?? null) as string | null,
     });
+    if (!idsByNote.has(id)) idsByNote.set(id, []);
+    idsByNote.get(id)!.push(r.id as string);
   }
   const noteIds = Array.from(counts.keys());
   if (noteIds.length === 0) return [];
 
+  // 1.5 每笔记「待学」卡数：没背过的（无 review_state）+ 背过但 due_at 已到期的，都算待学。
+  const allCardIds = Array.from(idsByNote.values()).flat();
+  const now = Date.now();
+  const reviewedIds = new Set<string>();
+  const dueAtByCard = new Map<string, number>();
+  if (allCardIds.length > 0) {
+    const { data: reviewRows, error: reviewErr } = await supabase
+      .from("review_state")
+      .select("card_id, due_at")
+      .in("card_id", allCardIds);
+    if (reviewErr) throw reviewErr;
+    for (const s of reviewRows ?? []) {
+      const cid = s.card_id as string;
+      reviewedIds.add(cid);
+      dueAtByCard.set(cid, s.due_at ? new Date(s.due_at as string).getTime() : 0);
+    }
+  }
+
   // 2. 这些笔记的标题 + 所属文件夹 + 来源类型（区分卡片文件）
   const { data: notes, error: err2 } = await supabase
     .from("notes")
-    .select("id, title, folder_id, source_type, content_text")
+    .select("id, title, cards_title, folder_id, source_type, content_text")
     .in("id", noteIds);
   if (err2) throw err2;
 
@@ -254,10 +346,13 @@ export async function listCardGroups(): Promise<CardFolderGroup[]> {
     }
     folderMap.get(key)!.notes.push({
       noteId: n.id,
-      title: n.title,
+      title: n.cards_title ?? n.title,
       count: counts.get(n.id) ?? 0,
       sourceType: n.source_type ?? null,
       lang: dominantLang(cardsByNote.get(n.id) ?? [], n.content_text),
+      due: (idsByNote.get(n.id) ?? []).filter(
+        (cid) => !reviewedIds.has(cid) || (dueAtByCard.get(cid) ?? 0) <= now
+      ).length,
     });
   }
 
@@ -266,6 +361,7 @@ export async function listCardGroups(): Promise<CardFolderGroup[]> {
     if (a.folderId === null) return 1;
     if (b.folderId === null) return -1;
     return a.folderName.localeCompare(b.folderName, "zh");
+  });
   });
 }
 
@@ -277,6 +373,7 @@ export async function listReviewCards(
   noteId: string | null,
   kind?: string | null
 ): Promise<ReviewItem[]> {
+  return qcached("listReviewCards", [noteId ?? null, kind ?? null], async () => {
   const supabase = await createClient();
 
   let q = supabase
@@ -315,6 +412,7 @@ export async function listReviewCards(
     })
     .filter(kindMatches)
     .map((c) => ({ card: c, state: stateMap.get(c.id) ?? null }));
+  });
 }
 
 /** 待复习的一个「文件」（笔记 + 类别）及它的到期卡片数。noteId 为空表示独立闪卡。 */
@@ -331,6 +429,7 @@ export type DueFile = {
  * 返回每个文件待复习的张数，不融合在一起。
  */
 export async function listDueFiles(): Promise<DueFile[]> {
+  return qcached("listDueFiles", [], async () => {
   const supabase = await createClient();
 
   const { data: cards, error: err1 } = await supabase.from("cards").select("*");
@@ -390,6 +489,7 @@ export async function listDueFiles(): Promise<DueFile[]> {
     });
   }
   return files.sort((a, b) => b.count - a.count);
+  });
 }
 
 /** 读用户设置；没存过就返回默认值（每日目标默认 20 张）。 */
@@ -398,7 +498,7 @@ export async function getUserSettings(): Promise<UserSettings> {
   const { data, error } = await supabase
     .from("user_settings")
     .select(
-      "daily_goal, reminder_enabled, reminder_time, recognition_rules, hidden_themes, ai_text_provider, ai_speech_provider, ai_vision_provider"
+      "daily_goal, reminder_enabled, reminder_time, review_shuffle, recognition_rules, hidden_themes, ai_text_provider, ai_speech_provider, ai_vision_provider"
     )
     .limit(1)
     .maybeSingle();
@@ -407,6 +507,7 @@ export async function getUserSettings(): Promise<UserSettings> {
     daily_goal: data?.daily_goal ?? 20,
     reminder_enabled: data?.reminder_enabled ?? false,
     reminder_time: data?.reminder_time ?? null,
+    review_shuffle: data?.review_shuffle ?? false,
     recognition_rules: (data?.recognition_rules ?? null) as UserSettings["recognition_rules"],
     hidden_themes: (data?.hidden_themes ?? []) as string[],
     ai_text_provider: (data?.ai_text_provider ?? null) as string | null,
@@ -457,18 +558,17 @@ export type ReviewOverview = {
   weakCards: ReviewItem[];
 };
 
-const KIND_SUFFIX = (k: string | null) =>
-  k === "word" ? "生词" : k === "example" ? "例句" : k === "grammar" ? "语法" : "";
-
 /** 所有卡片（综合测试用）。 */
 export async function listAllCards(): Promise<Card[]> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("cards")
-    .select("*")
-    .order("created_at", { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as Card[];
+  return qcached("listAllCards", [], async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("cards")
+      .select("*")
+      .order("created_at", { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as Card[];
+  });
 }
 
 /** 所有「到期」的卡（没背过的 + due_at 已到），跨全部笔记/独立卡。故事模式挑生词用。 */
@@ -513,6 +613,7 @@ export async function listCollectionCards(
 
 /** 待加强的卡：上次答错（评分 ≤2）或多次忘记（lapses>0 且间隔很短），按最不熟排前。 */
 export async function listWeakCards(): Promise<ReviewItem[]> {
+  return qcached("listWeakCards", [], async () => {
   const supabase = await createClient();
   const [cardsRes, statesRes] = await Promise.all([
     supabase.from("cards").select("*"),
@@ -534,6 +635,7 @@ export async function listWeakCards(): Promise<ReviewItem[]> {
       return (sa.last_rating ?? 0) - (sb.last_rating ?? 0) || sb.lapses - sa.lapses;
     })
     .map((c) => ({ card: c, state: stateMap.get(c.id) ?? null }));
+  });
 }
 
 /** 测试错题集的卡（最近选错的排前），附上复习状态供「开始背」用。 */
@@ -567,11 +669,12 @@ export async function listTestErrors(): Promise<ReviewItem[]> {
 
 /** 复习总览：统计 + 合集 + 待加强。 */
 export async function getReviewOverview(): Promise<ReviewOverview> {
+  return qcached("getReviewOverview", [], async () => {
   const supabase = await createClient();
   const [cardsRes, statesRes, notesRes] = await Promise.all([
     supabase.from("cards").select("*"),
     supabase.from("review_state").select("*"),
-    supabase.from("notes").select("id, title"),
+    supabase.from("notes").select("id, title, cards_title"),
   ]);
   if (cardsRes.error) throw cardsRes.error;
   if (statesRes.error) throw statesRes.error;
@@ -579,12 +682,16 @@ export async function getReviewOverview(): Promise<ReviewOverview> {
 
   const cards = (cardsRes.data ?? []) as Card[];
   const states = (statesRes.data ?? []) as ReviewState[];
-  const notes = (notesRes.data ?? []) as { id: string; title: string }[];
+  const notes = (notesRes.data ?? []) as {
+    id: string;
+    title: string;
+    cards_title?: string | null;
+  }[];
 
   const stateMap = new Map<string, ReviewState>();
   for (const s of states) stateMap.set(s.card_id, s);
   const noteMap = new Map<string, string>();
-  for (const n of notes) noteMap.set(n.id, n.title);
+  for (const n of notes) noteMap.set(n.id, n.cards_title ?? n.title);
 
   const now = Date.now();
   const dayStart = (offset: number) => {
@@ -626,16 +733,17 @@ export async function getReviewOverview(): Promise<ReviewOverview> {
     recentDays.push({ label: `${d.getMonth() + 1}/${d.getDate()}`, count });
   }
 
-  // 合集：按 (note_id, kind) 分组，统计总数与到期数，并记下最近复习时间。
+  // 合集：按 note_id 分组（生词/例句/语法都算同一篇笔记，背诵不细分），统计总数与到期数，并记下最近复习时间。
   const groupMap = new Map<
     string,
-    { noteId: string | null; kind: string | null; total: number; due: number; lastReviewedAt: number }
+    { noteId: string | null; total: number; due: number; lastReviewedAt: number }
   >();
   for (const c of cards) {
-    const key = `${c.note_id ?? "orphans"}::${c.kind ?? ""}`;
+    const noteId = c.note_id ?? null;
+    const key = noteId ?? "orphans";
     let g = groupMap.get(key);
     if (!g) {
-      g = { noteId: c.note_id ?? null, kind: c.kind ?? null, total: 0, due: 0, lastReviewedAt: 0 };
+      g = { noteId, total: 0, due: 0, lastReviewedAt: 0 };
       groupMap.set(key, g);
     }
     g.total++;
@@ -647,19 +755,15 @@ export async function getReviewOverview(): Promise<ReviewOverview> {
     }
   }
   const collections: CollectionSummary[] = Array.from(groupMap.values())
-    .map((g) => {
-      const base = g.noteId === null ? "独立闪卡" : (noteMap.get(g.noteId) ?? "无标题");
-      const suffix = KIND_SUFFIX(g.kind);
-      return {
-        key: `${g.noteId ?? "orphans"}::${g.kind ?? ""}`,
-        noteId: g.noteId,
-        kind: g.kind,
-        title: suffix ? `${base} · ${suffix}` : base,
-        total: g.total,
-        due: g.due,
-        lastReviewedAt: g.lastReviewedAt > 0 ? g.lastReviewedAt : null,
-      };
-    })
+    .map((g) => ({
+      key: g.noteId ?? "orphans",
+      noteId: g.noteId,
+      kind: null,
+      title: g.noteId === null ? "独立闪卡" : (noteMap.get(g.noteId) ?? "无标题"),
+      total: g.total,
+      due: g.due,
+      lastReviewedAt: g.lastReviewedAt > 0 ? g.lastReviewedAt : null,
+    }))
     .sort((a, b) => b.due - a.due || b.total - a.total);
 
   const weakCards: ReviewItem[] = cards
@@ -689,11 +793,13 @@ export async function getReviewOverview(): Promise<ReviewOverview> {
     collections,
     weakCards,
   };
+  });
 }
 
 /** 所有「可归类到词群主题」的卡（生词 + 例句，含所属笔记标题）。
  *  词群页按主题分组用；现在生词、例句都按主题一起归，不再分成两类。 */
 export async function listWordCards(): Promise<CardWithNote[]> {
+  return qcached("listWordCards", [], async () => {
   const supabase = await createClient();
   const { data: cards, error } = await supabase
     .from("cards")
@@ -725,6 +831,7 @@ export async function listWordCards(): Promise<CardWithNote[]> {
       ...card,
       note_title: card.note_id ? titleMap.get(card.note_id) ?? null : null,
     };
+  });
   });
 }
 
@@ -792,17 +899,20 @@ export async function listThemeReviewItems(themeKey: string): Promise<ReviewItem
 
 /** 所有素材合集（新建时间在前），照 listWordThemes。 */
 export async function listMaterialCollections(): Promise<MaterialCollection[]> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("material_collections")
-    .select("*")
-    .order("created_at", { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as MaterialCollection[];
+  return qcached("listMaterialCollections", [], async () => {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("material_collections")
+      .select("*")
+      .order("created_at", { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as MaterialCollection[];
+  });
 }
 
 /** 所有素材（时间倒序），并带上所属笔记标题（照 listWordCards 的 titleMap 合并）。 */
 export async function listMaterials(): Promise<MaterialWithNote[]> {
+  return qcached("listMaterials", [], async () => {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("materials")
@@ -830,6 +940,7 @@ export async function listMaterials(): Promise<MaterialWithNote[]> {
     ...m,
     note_title: m.note_id ? titleMap.get(m.note_id) ?? null : null,
   }));
+  });
 }
 
 /** 找出这篇笔记「来自」的素材（反向：materials.note_id → 该笔记）。失败返回空数组，不打断打开笔记。 */
@@ -852,8 +963,8 @@ export async function getMaterial(id: string): Promise<Material | null> {
     .from("materials")
     .select("*")
     .eq("id", id)
-    .single();
-  if (error || !data) return null;
+    .maybeSingle();
+  if (error) throw error;
   return data as Material;
 }
 
@@ -864,8 +975,8 @@ export async function getMaterialCollection(id: string): Promise<MaterialCollect
     .from("material_collections")
     .select("*")
     .eq("id", id)
-    .single();
-  if (error || !data) return null;
+    .maybeSingle();
+  if (error) throw error;
   return data as MaterialCollection;
 }
 
@@ -901,4 +1012,52 @@ export async function listMaterialsByCollection(
     ...m,
     note_title: m.note_id ? titleMap.get(m.note_id) ?? null : null,
   }));
+}
+
+/** 语伴收藏页数据：文字记录（assistant_records，按收藏时间倒序）+ 媒体素材（materials，时间倒序）。
+ * 素材库独立页已移除，materials 即「媒体收藏」。 */
+export async function listFavorites(): Promise<{
+  records: Record<string, unknown>[];
+  materials: MaterialWithNote[];
+}> {
+  return qcached("listFavorites", [], async () => {
+  const supabase = await createClient();
+  const [recRows, matRows] = await Promise.all([
+    supabase
+      .from("assistant_records")
+      .select("*")
+      .order("favorited", { ascending: false }),
+    supabase
+      .from("materials")
+      .select("*")
+      .order("created_at", { ascending: false }),
+  ]);
+  if (recRows.error) throw recRows.error;
+  if (matRows.error) throw matRows.error;
+
+  const materials = (matRows.data ?? []) as Material[];
+  const noteIds = Array.from(
+    new Set(
+      materials
+        .map((m) => m.note_id)
+        .filter((x): x is string => Boolean(x))
+    )
+  );
+  const titleMap = new Map<string, string>();
+  if (noteIds.length > 0) {
+    const { data: notes } = await supabase
+      .from("notes")
+      .select("id, title")
+      .in("id", noteIds);
+    for (const n of notes ?? []) titleMap.set(n.id, n.title);
+  }
+
+  return {
+    records: (recRows.data ?? []) as Record<string, unknown>[],
+    materials: materials.map((m) => ({
+      ...m,
+      note_title: m.note_id ? titleMap.get(m.note_id) ?? null : null,
+    })),
+  };
+  });
 }

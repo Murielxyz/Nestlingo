@@ -1,7 +1,7 @@
 // 语言检测：按 Unicode 区段判断一段文字是哪种语言（闪卡发音、词群页分语言标签都用它）。
-// 泰语 / 韩语 / 中文 / 日语 / 英语 五类，其余归「其他」。
+// 泰语 / 韩语 / 中文 / 日语 / 英语 / 西班牙语 六类，其余归「其他」。
 
-export type Lang = "thai" | "korean" | "chinese" | "japanese" | "english" | "other";
+export type Lang = "thai" | "korean" | "chinese" | "japanese" | "english" | "spanish" | "other";
 
 export function detectLang(text: string): Lang {
   if (/[฀-๿]/.test(text)) return "thai"; // 泰文
@@ -9,6 +9,9 @@ export function detectLang(text: string): Lang {
   if (/[぀-ヿ]/.test(text)) return "japanese"; // 假名 → 日语（假名只存在于日文，最可靠，必须先于汉字判断；
   // 否则「食べる」「お寿司」这类汉字+假名混合词会先被汉字命中判成中文）
   if (/[一-鿿]/.test(text)) return "chinese"; // 汉字（无假名）→ 中文；中文与日语共用汉字，纯汉字文本只能归中文兜底
+  // 西班牙语与英语共用拉丁字母，字符层只能靠西语特有符号（ñ/¿/¡）识别；没有这些符号的纯拉丁词仍归英语，
+  // 需要更准的西班牙语标签就靠用户手动改（卡片 lang / 语言下拉）。
+  if (/[ñÑ¿¡]/.test(text)) return "spanish";
   if (/[A-Za-zÀ-ɏͰ-Ͽ]/.test(text)) return "english"; // 拉丁/希腊字母 → 英语（无上述几种文字时才到这儿）
   return "other";
 }
@@ -56,6 +59,8 @@ export function speechLang(lang: Lang): string {
       return "ja-JP";
     case "english":
       return "en-US";
+    case "spanish":
+      return "es-ES";
     default:
       return "en-US";
   }
@@ -78,7 +83,7 @@ export function cleanForSpeech(text: string, lang?: Lang): string {
           ? /[一-鿿]/
           : l === "japanese"
             ? /[぀-ヿ一-鿿]/ // 日语：假名 + 汉字
-            : /[A-Za-zÀ-ɏͰ-Ͽ]/; // 英语：拉丁/希腊字母
+            : /[A-Za-zÀ-ɏͰ-Ͽ]/; // 英语/西班牙语：拉丁/希腊字母
   return [...text]
     .filter((ch) => keep.test(ch) || /\s/.test(ch))
     .join("")
@@ -87,7 +92,7 @@ export function cleanForSpeech(text: string, lang?: Lang): string {
 }
 
 /** 语言下拉 / 分组的固定显示顺序。 */
-export const LANG_ORDER: Lang[] = ["thai", "korean", "chinese", "japanese", "english", "other"];
+export const LANG_ORDER: Lang[] = ["thai", "korean", "japanese", "english", "spanish", "other"];
 
 export const LANG_LABEL: Record<Lang, string> = {
   thai: "泰语",
@@ -95,6 +100,7 @@ export const LANG_LABEL: Record<Lang, string> = {
   chinese: "中文",
   japanese: "日语",
   english: "英语",
+  spanish: "西班牙语",
   other: "其他",
 };
 
@@ -105,5 +111,6 @@ export const LANG_COLOR: Record<Lang, string> = {
   chinese: "bg-amber-50 text-amber-700",
   japanese: "bg-violet-50 text-violet-700",
   english: "bg-blue-50 text-blue-700",
+  spanish: "bg-rose-50 text-rose-700",
   other: "bg-zinc-100 text-zinc-600",
 };

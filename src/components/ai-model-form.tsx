@@ -8,6 +8,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { UserSettings } from "@/lib/types";
+import { SettingsGroup, SettingsRow } from "./settings-row";
 
 /** 环境里配了哪些 Key（设置页按 .env.local 计算后传进来，用来标「未配 Key」）。 */
 export type AiKeys = {
@@ -101,8 +102,8 @@ export function AiModelForm({ initial, keys }: { initial: UserSettings; keys: Ai
   }
 
   return (
-    <div>
-      <div className="space-y-3">
+    <div className="space-y-3">
+      <SettingsGroup title="AI 模型">
         {TASKS.map((t) => {
           // 只显示已配 Key 的提供商（「默认」始终可选）。
           const visibleOptions = t.options.filter((o) => o.key === null || keys[o.key]);
@@ -110,15 +111,14 @@ export function AiModelForm({ initial, keys }: { initial: UserSettings; keys: Ai
             ? values[t.key]
             : "";
           return (
-            <label key={t.key} className="block">
-              <span className="text-xs text-zinc-500">{t.title}</span>
+            <SettingsRow key={t.key} label={t.title}>
               <select
                 value={selectValue}
                 onChange={(e) => {
                   setValues((v) => ({ ...v, [t.key]: e.target.value }));
                   setSaved(false);
                 }}
-                className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-800 focus:border-teal-500 focus:outline-none"
+                className="shrink-0 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-700 focus:border-teal-500 focus:outline-none"
               >
                 {visibleOptions.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -126,18 +126,18 @@ export function AiModelForm({ initial, keys }: { initial: UserSettings; keys: Ai
                   </option>
                 ))}
               </select>
-            </label>
+            </SettingsRow>
           );
         })}
-      </div>
+      </SettingsGroup>
 
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      <p className="px-1 text-xs text-zinc-400">
+        「默认」跟随环境配置，其它选项只在已配 Key 时显示。
+      </p>
 
-      <button
-        onClick={save}
-        disabled={busy}
-        className="mt-4 inline-flex items-center justify-center gap-1 rounded-xl border border-teal-200 px-4 py-2 text-sm font-semibold text-teal-600 transition-colors hover:bg-teal-50 disabled:opacity-60"
-      >
+      {error && <p className="px-1 text-sm text-red-600">{error}</p>}
+
+      <button onClick={save} disabled={busy} className="btn-brand w-full">
         {busy ? "保存中…" : saved ? "已保存 ✓" : "保存 AI 模型"}
       </button>
     </div>

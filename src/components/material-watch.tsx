@@ -28,14 +28,6 @@ import { ImportMaterialModal } from "./import-material-modal";
 import { PodcastAudioPlayer } from "./podcast-audio-player";
 import { BackButton } from "./back-button";
 
-const STATUS_LABEL: Record<Material["status"], string> = {
-  pending: "待处理",
-  imported: "已导入",
-};
-const STATUS_COLOR: Record<Material["status"], string> = {
-  pending: "bg-amber-50 text-amber-700",
-  imported: "bg-emerald-50 text-emerald-700",
-};
 const FILE_KIND_LABEL: Record<string, string> = {
   audio: "音频",
   image: "图片",
@@ -125,7 +117,7 @@ function PodcastPlayerMaterial({
               >
                 <button
                   onClick={() => setActive(active === i ? null : i)}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-teal-600 px-2 py-1 text-xs font-semibold text-white hover:bg-teal-700"
+                  className="inline-flex items-center gap-1.5 rounded-md bg-teal-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-teal-700"
                   aria-label={active === i ? `停止 ${ep.title}` : `播放 ${ep.title}`}
                 >
                   <Play className="h-3 w-3" />
@@ -136,7 +128,7 @@ function PodcastPlayerMaterial({
                 </span>
                 <button
                   onClick={() => onImportEpisode(ep)}
-                  className="shrink-0 rounded-md border border-teal-200 px-2 py-1 text-xs font-medium text-teal-600 hover:bg-teal-50"
+                  className="shrink-0 rounded-md border border-teal-200 px-2 py-1.5 text-xs font-medium text-teal-600 hover:bg-teal-50"
                 >
                   导入
                 </button>
@@ -274,16 +266,16 @@ export function MaterialWatch({ material: initial }: { material: Material }) {
       {/* 顶栏：返回（回到刚进来的那个列表）+ 标题 + 状态 */}
       <header className="page-header mb-4">
         <BackButton
-          fallback="/materials"
+          fallback="/companion/favorites"
           className="inline-flex items-center gap-1.5 text-sm font-medium text-zinc-500 hover:text-zinc-800"
         >
           <ArrowLeft className="h-4 w-4" />
-          素材库
+          收藏夹
         </BackButton>
 
         <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-xl font-bold text-zinc-900" title={material.title}>
+            <h1 className="text-lg font-bold text-zinc-900" title={material.title}>
               {material.title || material.url}
             </h1>
             {material.source && <p className="mt-0.5 text-sm text-zinc-400">{material.source}</p>}
@@ -295,17 +287,17 @@ export function MaterialWatch({ material: initial }: { material: Material }) {
             <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-600">
               {MATERIAL_TYPE_LABEL[material.type]}
             </span>
-            <span
-              className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLOR[material.status]}`}
-            >
-              {STATUS_LABEL[material.status]}
-            </span>
+            {importedNote && (
+              <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
+                已导入
+              </span>
+            )}
           </div>
         </div>
       </header>
 
-      {/* 打开原始页：视频/播客在内容框上方、右上角，箭头+文字链接（非按钮，无背景）；文章的在采集区里与「提取正文」同行。 */}
-      {(material.type === "youtube" || material.type === "podcast") && (
+      {/* 打开原始页：视频 / 播客 / 音频，右对齐放在观看区上方（不放内容框内，避免顶部出现白色留白）。 */}
+      {(material.type === "youtube" || material.type === "podcast" || material.type === "audio") && (
         <div className="mb-1 flex justify-end">
           <a
             href={material.url}
@@ -315,7 +307,7 @@ export function MaterialWatch({ material: initial }: { material: Material }) {
             title="在新标签打开原始页面"
           >
             <ExternalLink className="h-3.5 w-3.5" />
-            {material.type === "podcast" ? "打开音频" : "打开原文"}
+            {material.type === "youtube" ? "打开原始链接" : "打开音频"}
           </a>
         </div>
       )}
@@ -332,7 +324,7 @@ export function MaterialWatch({ material: initial }: { material: Material }) {
               <button
                 onClick={extract}
                 disabled={extractBusy}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 px-3 py-2 text-sm font-medium text-teal-600 transition-colors hover:bg-teal-50 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 px-3 py-2.5 text-sm font-medium text-teal-600 transition-colors hover:bg-teal-50 disabled:opacity-50"
               >
                 {extractBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanText className="h-4 w-4" />}
                 {extractBusy ? "提取中…" : articleText.trim() ? "重新提取正文" : "自动提取正文"}
@@ -357,7 +349,7 @@ export function MaterialWatch({ material: initial }: { material: Material }) {
             }}
             placeholder="把正文贴到这里（或点「自动提取正文」）。导入时这段会被写成笔记的「原文」块，供 AI 精读 / 转卡用。"
             rows={18}
-            className="w-full min-h-[55vh] rounded-lg border border-zinc-200 px-3 py-2 text-sm leading-6 text-zinc-800 focus:border-teal-500 focus:outline-none"
+            className="w-full min-h-[55vh] rounded-lg border border-zinc-200 px-3 py-2.5 text-sm leading-6 text-zinc-800 focus:border-teal-500 focus:outline-none placeholder:text-sm"
           />
         </div>
       ) : (
@@ -383,7 +375,6 @@ export function MaterialWatch({ material: initial }: { material: Material }) {
                   title={material.title}
                   subtitle={material.source}
                   cover={material.thumbnail}
-                  openHref={material.url}
                 />
               ) : embed ? (
                 <div className="aspect-video w-full">
@@ -503,7 +494,6 @@ function FileMaterial({ material }: { material: Material }) {
           title={material.title || material.url}
           subtitle={`${kindLabel} · 文件素材`}
           cover={material.thumbnail}
-          openHref={material.url}
         />
       ) : kind === "image" ? (
         <img

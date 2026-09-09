@@ -26,7 +26,7 @@ export type ParseResult = {
   rest: ParsedCard[];
 };
 
-const WORD_TITLES = new Set([
+export const WORD_TITLES = new Set([
   "生词表",
   "生词",
   "词汇表",
@@ -35,9 +35,9 @@ const WORD_TITLES = new Set([
   "vocabulary",
   "vocab",
 ]);
-const EXAMPLE_TITLES = new Set(["例句表", "例句", "example", "examples"]);
-const GRAMMAR_TITLES = new Set(["语法", "语法点", "文法", "grammar"]);
-const ARTICLE_TITLES = new Set(["原文", "原文稿", "文章", "文稿", "transcript", "article"]);
+export const EXAMPLE_TITLES = new Set(["例句表", "例句", "example", "examples"]);
+export const GRAMMAR_TITLES = new Set(["语法", "语法点", "文法", "grammar"]);
+const SKIP_TITLES = new Set(["原文", "原文稿", "文章", "文稿", "transcript", "article", "备注"]);
 
 /** 一行文字是不是「生词/例句/语法」区域的标题（忽略开头的 # 和大小写）。 */
 function sectionKind(line: string): SectionKind | null {
@@ -48,10 +48,10 @@ function sectionKind(line: string): SectionKind | null {
   return null;
 }
 
-/** 一行文字是不是「原文 / 文章」标题（这类区域只读，转成闪卡时整段跳过）。 */
-function isArticleTitle(line: string): boolean {
+/** 一行文字是不是「原文 / 文章 / 备注」标题（这类区域只读，转成闪卡时整段跳过）。 */
+function isSkipTitle(line: string): boolean {
   const t = line.trim().replace(/^#+\s*/, "").toLowerCase();
-  return ARTICLE_TITLES.has(t);
+  return SKIP_TITLES.has(t);
 }
 
 /**
@@ -84,7 +84,7 @@ export function parseNote(text: string, rules?: RecognitionRules | null): ParseR
       skipping = false;
       continue;
     }
-    if (isArticleTitle(line)) {
+    if (isSkipTitle(line)) {
       flush();
       current = null;
       skipping = true;

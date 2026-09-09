@@ -11,7 +11,7 @@ import type { ReactNode } from "react";
 export function BackButton({
   fallback,
   forceFallback = false,
-  className = "rounded-lg px-2 py-1 text-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800",
+  className = "icon-btn text-xl",
   ariaLabel = "返回",
   children = "←",
 }: {

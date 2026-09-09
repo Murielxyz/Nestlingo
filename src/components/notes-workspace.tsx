@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { FolderPlus, FileText, Folder, Search } from "lucide-react";
+import { FolderPlus, FileText, Folder, Search, ChevronRight, ArrowUp, ArrowDown } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
-  flattenFolderTree,
+  folderTree,
   descendantFolderIds,
   folderNoteTotals,
 } from "@/lib/folders";
+import { usePanelResize } from "@/lib/use-panel-resize";
 import { NoteList } from "./notes-browser";
 import { NewNoteButton } from "./new-note-button";
 import type { Folder as FolderType, Note } from "@/lib/types";
@@ -43,6 +44,23 @@ export function NotesWorkspace({
   const [selectedId, setSelectedId] = useState<"all" | string>("all");
   const [collapsed, setCollapsed] = useState(false);
   const [query, setQuery] = useState("");
+
+  // 文件夹栏 / 笔记列表栏宽度：桌面端可拖拽调整并记住（`nestlingo:` 前缀，照 usePanelResize）。
+  // 两栏都是把手在右缘的左侧栏 → flip:true（往右拖边界往右、变宽；收起功能已撤）。
+  const folderResize = usePanelResize({
+    key: "nestlingo:folders-width",
+    initial: 176,
+    min: 160,
+    max: 320,
+    flip: true,
+  });
+  const listResize = usePanelResize({
+    key: "nestlingo:notes-list-width",
+    initial: 288,
+    min: 224,
+    max: 420,
+    flip: true,
+  });
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [folderName, setFolderName] = useState("");
   const [newFolderParentId, setNewFolderParentId] = useState<string | null>(null);
@@ -86,7 +104,15 @@ export function NotesWorkspace({
     () => folderNoteTotals(folders, folderCounts),
     [folders, folderCounts]
   );
-  const flatFolders = useMemo(() => flattenFolderTree(folders), [folders]);
+  // 可折叠树：roots 顶层，folderChildren 父 id → 直接子夹。初始全部展开（保持原有「层层缩进全可见」的样子），
+  // 想收哪层点箭头即可；点击文件夹名仍是筛选（父文件夹含其全部子夹下笔记）。
+  const { roots, children: folderChildren } = useMemo(
+    () => folderTree(folders),
+    [folders]
+  );
+  const [openFolders, setOpenFolders] = useState<Set<string>>(
+    () => new Set(folders.map((f) => f.id))
+  );
 
   const selectedFolder = folders.find((f) => f.id === selectedId);
   const listTitle =
@@ -132,6 +158,28 @@ export function NotesWorkspace({
     router.refresh();
   }
 
+  /** 上移/下移文件夹：与相邻兄弟交换位置，并把整层兄弟的 position 重写成 0..n-1（刷新后按 position 排序即生效）。 */
+  async function moveFolder(folder: FolderType, dir: -1 | 1) {
+    const siblings = folders
+      .filter((f) => (f.parent_id ?? null) === (folder.parent_id ?? null))
+      .map((f) => f.id);
+    const idx = siblings.indexOf(folder.id);
+    const target = idx + dir;
+    if (idx === -1 || target < 0 || target >= siblings.length) return;
+    const reordered = [...siblings];
+    [reordered[idx], reordered[target]] = [reordered[target], reordered[idx]];
+    const supabase = createClient();
+    for (let i = 0; i < reordered.length; i++) {
+      const { error } = await supabase
+        .from("folders")
+        .update({ position: i })
+        .eq("id", reordered[i]);
+      if (error) return;
+    }
+    setMenuFolderId(null);
+    router.refresh();
+  }
+
   // 其它子页面（闪卡页 / 文件夹页）：不套侧栏，直接整页铺满。
   if (!isList && !isNote) {
     return <div className="min-w-0 flex-1">{children}</div>;
@@ -145,11 +193,171 @@ export function NotesWorkspace({
   const showFolderTag = selectedId === "all";
   const newNoteFolderId = selectedId === "all" ? null : selectedId;
 
+  // 递归渲染一支文件夹：先箭头（有子夹才出现）切换展开/收起，再点名字筛选，右侧悬停出现 ⋯ 菜单。
+  function renderFolder(
+    folder: FolderType,
+    depth: number,
+    siblings: FolderType[]
+  ): React.ReactNode {
+    const count = folderTotals.get(folder.id) ?? 0;
+    const childFolds = folderChildren.get(folder.id) ?? [];
+    const isOpen = openFolders.has(folder.id);
+    const siblingIdx = siblings.findIndex((f) => f.id === folder.id);
+    const canMoveUp = siblingIdx > 0;
+    const canMoveDown = siblingIdx >= 0 && siblingIdx < siblings.length - 1;
+
+    if (editingId === folder.id) {
+      return (
+        <div
+          key={folder.id}
+          style={{ marginLeft: depth * 12 }}
+          className="mt-0.5 flex items-center gap-1 px-1"
+        >
+          <Folder className="h-4 w-4 shrink-0 text-zinc-400" />
+          <input
+            value={editingName}
+            onChange={(e) => setEditingName(e.target.value)}
+            className="min-w-0 flex-1 rounded-lg border border-zinc-300 px-2 py-1.5 text-sm placeholder:text-sm focus:border-teal-500 focus:outline-none"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveEdit(folder.id);
+              if (e.key === "Escape") setEditingId(null);
+            }}
+          />
+          <button
+            onClick={() => saveEdit(folder.id)}
+            className="text-xs text-teal-600 hover:text-teal-700"
+          >
+            保存
+          </button>
+          <button
+            onClick={() => setEditingId(null)}
+            className="text-xs text-zinc-500 hover:text-zinc-700"
+          >
+            取消
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div key={folder.id}>
+        <div style={{ marginLeft: depth * 12 }} className="group relative">
+          <div className="flex items-center gap-0.5">
+            {childFolds.length > 0 ? (
+              <button
+                onClick={() =>
+                  setOpenFolders((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(folder.id)) next.delete(folder.id);
+                    else next.add(folder.id);
+                    return next;
+                  })
+                }
+                aria-label={isOpen ? "收起子文件夹" : "展开子文件夹"}
+                title={isOpen ? "收起子文件夹" : "展开子文件夹"}
+                className="shrink-0 rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
+              >
+                <ChevronRight
+                  className={`h-4 w-4 transition-transform ${isOpen ? "rotate-90" : ""}`}
+                />
+              </button>
+            ) : (
+              <span className="w-6 shrink-0" />
+            )}
+            <button
+              onClick={() => setSelectedId(folder.id)}
+              className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg py-2 pl-2 pr-2 text-left text-sm transition-colors ${
+                selectedId === folder.id
+                  ? "bg-teal-50 text-teal-700"
+                  : "text-zinc-700 hover:bg-zinc-100"
+              }`}
+            >
+              <Folder className="h-4 w-4 shrink-0 text-zinc-400" />
+              <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+              <span className="text-xs text-zinc-400">{count}</span>
+            </button>
+          </div>
+
+          {/* ⋯ 菜单：重命名 / 删除 */}
+          <button
+            onClick={() =>
+              setMenuFolderId((id) => (id === folder.id ? null : folder.id))
+            }
+            className="absolute right-1 top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 text-xs text-zinc-400 opacity-0 transition-opacity hover:bg-zinc-200 hover:text-zinc-700 group-hover:opacity-100"
+            aria-label="文件夹操作"
+          >
+            ⋯
+          </button>
+          {menuFolderId === folder.id && (
+            <>
+              <div
+                className="fixed inset-0 z-30"
+                onClick={() => setMenuFolderId(null)}
+              />
+              <div className="absolute right-0 z-40 mt-1 w-32 rounded-xl border border-zinc-200 bg-white p-1 shadow-lg">
+                <button
+                  onClick={() => moveFolder(folder, -1)}
+                  disabled={!canMoveUp}
+                  className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100 disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />上移
+                </button>
+                <button
+                  onClick={() => moveFolder(folder, 1)}
+                  disabled={!canMoveDown}
+                  className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100 disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />下移
+                </button>
+                <button
+                  onClick={() => {
+                    setNewFolderParentId(folder.id);
+                    setShowNewFolder(true);
+                    setMenuFolderId(null);
+                  }}
+                  className="flex w-full rounded-lg px-2.5 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100"
+                >
+                  新建子文件夹
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingId(folder.id);
+                    setEditingName(folder.name);
+                    setMenuFolderId(null);
+                  }}
+                  className="flex w-full rounded-lg px-2.5 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100"
+                >
+                  重命名
+                </button>
+                <button
+                  onClick={() => removeFolder(folder)}
+                  className="flex w-full rounded-lg px-2.5 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                >
+                  删除
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
+        {isOpen && childFolds.length > 0 && (
+          <div className="mt-0.5 space-y-0.5">
+            {childFolds.map((c) => renderFolder(c, depth + 1, childFolds))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex md:h-screen">
       {/* ===== 左：文件夹栏（桌面，可收起） ===== */}
       {!collapsed && (
-        <aside className="hidden w-52 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 md:flex">
+        <aside
+          style={{ width: folderResize.width }}
+          className="relative hidden shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 md:flex"
+        >
           <div className="flex items-center gap-0.5 border-b border-zinc-200 px-2.5 py-2">
             <button
               onClick={() => setCollapsed(true)}
@@ -167,11 +375,11 @@ export function NotesWorkspace({
                 setNewFolderParentId(null);
                 setShowNewFolder((v) => !v);
               }}
-              className="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100"
               aria-label="新建文件夹"
               title="新建文件夹"
             >
-              <FolderPlus className="h-4 w-4" />
+              <FolderPlus className="h-5 w-5" />
             </button>
           </div>
 
@@ -188,7 +396,7 @@ export function NotesWorkspace({
                 onChange={(e) => setFolderName(e.target.value)}
                 placeholder={newFolderParentId ? "子文件夹名" : "新文件夹名"}
                 autoFocus
-                className="min-w-0 flex-1 rounded-lg border border-zinc-300 px-2 py-1 text-sm focus:border-teal-500 focus:outline-none"
+                className="min-w-0 flex-1 rounded-lg border border-zinc-300 px-2 py-1.5 text-sm placeholder:text-sm focus:border-teal-500 focus:outline-none"
               />
               <button
                 type="submit"
@@ -203,7 +411,7 @@ export function NotesWorkspace({
             {/* 全部笔记 */}
             <button
               onClick={() => setSelectedId("all")}
-              className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors ${
+              className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors ${
                 selectedId === "all"
                   ? "bg-teal-50 text-teal-700"
                   : "text-zinc-700 hover:bg-zinc-100"
@@ -214,116 +422,23 @@ export function NotesWorkspace({
               <span className="text-xs text-zinc-400">{notes.length}</span>
             </button>
 
-            {/* 文件夹（缩进树，点击即筛选；父文件夹会包含其子文件夹下的笔记） */}
-            {flatFolders.map(({ folder, depth }) => {
-              const count = folderTotals.get(folder.id) ?? 0;
-              if (editingId === folder.id) {
-                return (
-                  <div
-                    key={folder.id}
-                    style={{ marginLeft: depth * 12 }}
-                    className="mt-0.5 flex items-center gap-1 px-1"
-                  >
-                    <Folder className="h-4 w-4 shrink-0 text-zinc-400" />
-                    <input
-                      value={editingName}
-                      onChange={(e) => setEditingName(e.target.value)}
-                      className="min-w-0 flex-1 rounded-lg border border-zinc-300 px-2 py-1 text-sm focus:border-teal-500 focus:outline-none"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") saveEdit(folder.id);
-                        if (e.key === "Escape") setEditingId(null);
-                      }}
-                    />
-                    <button
-                      onClick={() => saveEdit(folder.id)}
-                      className="text-xs text-teal-600 hover:text-teal-700"
-                    >
-                      保存
-                    </button>
-                    <button
-                      onClick={() => setEditingId(null)}
-                      className="text-xs text-zinc-500 hover:text-zinc-700"
-                    >
-                      取消
-                    </button>
-                  </div>
-                );
-              }
-              return (
-                <div
-                  key={folder.id}
-                  style={{ marginLeft: depth * 12 }}
-                  className="group relative"
-                >
-                  <button
-                    onClick={() => setSelectedId(folder.id)}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors ${
-                      selectedId === folder.id
-                        ? "bg-teal-50 text-teal-700"
-                        : "text-zinc-700 hover:bg-zinc-100"
-                    }`}
-                  >
-                    <Folder className="h-4 w-4 shrink-0 text-zinc-400" />
-                    <span className="min-w-0 flex-1 truncate">{folder.name}</span>
-                    <span className="text-xs text-zinc-400">{count}</span>
-                  </button>
-
-                  {/* ⋯ 菜单：重命名 / 删除 */}
-                  <button
-                    onClick={() =>
-                      setMenuFolderId((id) => (id === folder.id ? null : folder.id))
-                    }
-                    className="absolute right-1 top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 text-xs text-zinc-400 opacity-0 transition-opacity hover:bg-zinc-200 hover:text-zinc-700 group-hover:opacity-100"
-                    aria-label="文件夹操作"
-                  >
-                    ⋯
-                  </button>
-                  {menuFolderId === folder.id && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-30"
-                        onClick={() => setMenuFolderId(null)}
-                      />
-                      <div className="absolute right-0 z-40 mt-1 w-32 rounded-xl border border-zinc-200 bg-white p-1 shadow-lg">
-                        <button
-                          onClick={() => {
-                            setNewFolderParentId(folder.id);
-                            setShowNewFolder(true);
-                            setMenuFolderId(null);
-                          }}
-                          className="flex w-full rounded-lg px-2.5 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100"
-                        >
-                          新建子文件夹
-                        </button>
-                        <button
-                          onClick={() => {
-                            setEditingId(folder.id);
-                            setEditingName(folder.name);
-                            setMenuFolderId(null);
-                          }}
-                          className="flex w-full rounded-lg px-2.5 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100"
-                        >
-                          重命名
-                        </button>
-                        <button
-                          onClick={() => removeFolder(folder)}
-                          className="flex w-full rounded-lg px-2.5 py-1.5 text-left text-sm text-red-600 hover:bg-red-50"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              );
-            })}
+            {/* 文件夹（可折叠树：箭头展开/收起，点名字筛选；父文件夹包含其全部子夹下的笔记） */}
+            {roots.map((folder) => renderFolder(folder, 0, roots))}
           </nav>
+          {/* 拖拽把手：按住右边缘左右拖调整宽度 */}
+          <div
+            onPointerDown={folderResize.onPointerDown}
+            className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize bg-transparent transition-colors hover:bg-teal-200/70"
+            aria-hidden
+          />
         </aside>
       )}
 
-      {/* ===== 中：笔记列表栏（桌面） ===== */}
-      <div className="hidden w-72 shrink-0 flex-col border-r border-zinc-200 bg-white md:flex">
+      {/* ===== 中：笔记列表栏（桌面，可拖宽） ===== */}
+      <div
+        style={{ width: listResize.width }}
+        className="relative hidden shrink-0 flex-col border-r border-zinc-200 bg-white md:flex"
+      >
         <div className="flex items-center gap-0.5 border-b border-zinc-200 px-2.5 py-2">
           {collapsed && (
             <button
@@ -340,15 +455,14 @@ export function NotesWorkspace({
           </span>
           <NewNoteButton folderId={newNoteFolderId} />
         </div>
-
         <div className="px-3 pt-2.5">
-          <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5">
+          <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2">
             <Search className="h-4 w-4 shrink-0 text-zinc-400" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="搜索笔记…"
-              className="min-w-0 flex-1 bg-transparent text-sm text-zinc-800 placeholder-zinc-400 focus:outline-none"
+              className="min-w-0 flex-1 bg-transparent text-sm text-zinc-800 placeholder-zinc-400 focus:outline-none placeholder:text-sm"
             />
             {query && (
               <button
@@ -361,7 +475,6 @@ export function NotesWorkspace({
             )}
           </div>
         </div>
-
         <div className="flex-1 overflow-y-auto px-2 py-2">
           {listNotes.length === 0 ? (
             <p className="px-2 py-6 text-center text-sm text-zinc-400">
@@ -376,6 +489,12 @@ export function NotesWorkspace({
             />
           )}
         </div>
+        {/* 拖拽把手：按住右边缘左右拖调整宽度 */}
+        <div
+          onPointerDown={listResize.onPointerDown}
+          className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize bg-transparent transition-colors hover:bg-teal-200/70"
+          aria-hidden
+        />
       </div>
 
       {/* ===== 右：内容栏 ===== */}

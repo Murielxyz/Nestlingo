@@ -51,13 +51,99 @@ const RATIOS: { key: RatioKey; label: string; h: number }[] = [
 type Part =
   | { kind: "title" }
   | { kind: "label"; label: string; color: string }
-  | { kind: "block"; index: number }
+  | { kind: "block"; index: number; table?: TablePartInfo }
   | { kind: "footer" };
+
+/** 一个「表头行 / 表体行」part 所属的表格信息：同一张表共享 groupId，表头 isHeader=true。 */
+type TablePartInfo = {
+  groupId: number;
+  isHeader: boolean;
+};
+
+/** 一页里的渲染单元：普通 part（title/label/块/footer）或合并后的整张表。 */
+type RenderUnit =
+  | { kind: "part"; part: Part }
+  | { kind: "table"; html: string };
 
 /** 给一个正文块生成一行纯文本预览（用于勾选列表）。 */
 function blockPreview(block: JSONContent): string {
   const t = docToText({ type: "doc", content: [block] }).replace(/\s+/g, " ").trim();
   return t.length > 60 ? `${t.slice(0, 60)}…` : t || "（空块）";
+}
+
+// ===== 表格按行切分（分享成图） =====
+
+/** 拆出一张表的表头行（可选）+ 表体行。表头判断：第一行首格 type 为 tableHeader。 */
+function splitTable(table: JSONContent): {
+  header: JSONContent | null;
+  body: JSONContent[];
+  hasHeader: boolean;
+} {
+  const rows = (table.content ?? []) as JSONContent[];
+  if (rows.length === 0) return { header: null, body: [], hasHeader: false };
+  const firstCell = ((rows[0].content ?? []) as JSONContent[])[0];
+  // toggleHeaderRow 是「整行」切 header_cell，判第一格即可。
+  const hasHeader = firstCell?.type === "tableHeader";
+  if (hasHeader) return { header: rows[0], body: rows.slice(1), hasHeader: true };
+  return { header: null, body: rows, hasHeader: false };
+}
+
+/** 是否有竖向合并单元格（rowspan>1）：按行切会截断，检测到就整块保留。 */
+function hasRowspan(table: JSONContent): boolean {
+  for (const row of (table.content ?? []) as JSONContent[]) {
+    for (const cell of (row.content ?? []) as JSONContent[]) {
+      if (((cell.attrs?.rowspan as number) ?? 1) > 1) return true;
+    }
+  }
+  return false;
+}
+
+/** 用原表 attrs（含 colwidth）包若干行，构造一个「单行 / 带表头」小表格节点。 */
+function makeTable(node: JSONContent, rows: JSONContent[]): JSONContent {
+  return { type: "table", ...(node.attrs ? { attrs: node.attrs } : {}), content: rows };
+}
+
+/** 把「表头 + 本页若干行」合并成一个完整表格的 HTML。 */
+function renderTableSlice(headerRow: JSONContent | null, bodyRows: JSONContent[]): string {
+  const content = headerRow ? [headerRow, ...bodyRows] : bodyRows;
+  try {
+    return generateHTML({ type: "doc", content: [{ type: "table", content }] }, editorExtensions);
+  } catch {
+    return "";
+  }
+}
+
+/** 把一页里的 part 分组：连续同 groupId 的表格 part 合并成一个 {kind:"table"} 单元。 */
+function buildPageUnits(page: Part[], flatNodes: JSONContent[]): RenderUnit[] {
+  const units: RenderUnit[] = [];
+  let i = 0;
+  while (i < page.length) {
+    const p = page[i];
+    if (p.kind === "block" && p.table) {
+      const g = p.table.groupId;
+      const slice: Part[] = [];
+      while (i < page.length) {
+        const q = page[i];
+        if (!(q.kind === "block" && q.table?.groupId === g)) break;
+        slice.push(q);
+        i++;
+      }
+      const headerPart = slice.find((x) => x.kind === "block" && x.table?.isHeader);
+      const headerRow =
+        headerPart && headerPart.kind === "block"
+          ? (flatNodes[headerPart.index].content?.[0] ?? null)
+          : null;
+      const bodyRows = slice
+        .filter((x) => x.kind === "block" && !x.table?.isHeader)
+        .map((x) => (x.kind === "block" ? flatNodes[x.index].content?.[0] : null))
+        .filter((x): x is JSONContent => Boolean(x));
+      units.push({ kind: "table", html: renderTableSlice(headerRow, bodyRows) });
+    } else {
+      units.push({ kind: "part", part: p });
+      i++;
+    }
+  }
+  return units;
 }
 
 /**
@@ -84,6 +170,8 @@ export function ShareModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pages, setPages] = useState<Part[][]>([]);
+  // 每页的实际内容高度（不含上下 p-8 边距），用于让每张图自适应内容、不浪费画幅。
+  const [pageHeights, setPageHeights] = useState<number[]>([]);
   // 取消勾选的正文块（默认全选）。用「反选集合」表示，空集合 = 全部导出。
   const [deselected, setDeselected] = useState<Set<number>>(new Set());
   const previewWrapRef = useRef<HTMLDivElement>(null);
@@ -104,13 +192,14 @@ export function ShareModal({
 
   // 把选中的顶层块「摊平」成可独立切页的单元：callout 拆成「标签 + 内容」，列表拆成逐条，
   // 这样生词/例句太多时可以按条切到多张图，而不是把整块裁掉。
-  const { flatHtmls, parts } = useMemo(() => {
+  const { flatNodes, flatHtmls, parts } = useMemo(() => {
     const flatNodes: JSONContent[] = [];
     const parts: Part[] = [{ kind: "title" }];
+    let tableId = 0;
 
-    const addNode = (node: JSONContent) => {
+    const addNode = (node: JSONContent, table?: TablePartInfo) => {
       flatNodes.push(node);
-      parts.push({ kind: "block", index: flatNodes.length - 1 });
+      parts.push({ kind: "block", index: flatNodes.length - 1, ...(table ? { table } : {}) });
     };
 
     const flatten = (node: JSONContent) => {
@@ -118,6 +207,21 @@ export function ShareModal({
         // 列表逐条拆，每条渲染成一个单项列表（保留项目符号），也方便按条切页。
         for (const li of node.content ?? []) {
           addNode({ type: node.type, content: [li] });
+        }
+      } else if (node.type === "table") {
+        // 表格按行拆：表头 + 逐行各成一个 part（单行小表格），切页时跨页重复表头。
+        const rows = (node.content ?? []) as JSONContent[];
+        if (rows.length === 0 || hasRowspan(node)) {
+          addNode(node); // 空表 / 含 rowspan：整块保留，不切
+          return;
+        }
+        const { header, body, hasHeader } = splitTable(node);
+        const groupId = tableId++;
+        if (hasHeader && header) {
+          addNode(makeTable(node, [header]), { groupId, isHeader: true });
+          for (const row of body) addNode(makeTable(node, [row]), { groupId, isHeader: false });
+        } else {
+          for (const row of body) addNode(makeTable(node, [row]), { groupId, isHeader: false });
         }
       } else {
         addNode(node);
@@ -130,8 +234,13 @@ export function ShareModal({
         // 按条切页：callout 拆成「标签 + 逐条内容」，超长时逐条分页
         const kind = (block.attrs?.kind as string) ?? "word";
         const meta = KIND_META[kind] ?? KIND_META.word;
-        parts.push({ kind: "label", label: meta.label, color: meta.color });
+        if (meta.label) {
+          parts.push({ kind: "label", label: meta.label, color: meta.color });
+        }
         for (const child of block.content ?? []) flatten(child);
+      } else if (block.type === "table") {
+        // 顶层表格也按行拆（笔记样式 / 按条切页两种视图都拆）：超页时切到多张并在每页重复表头。
+        flatten(block);
       } else {
         // 笔记样式：整块保留，callout 按笔记内页配色渲染（见 globals.css）
         addNode(block);
@@ -152,7 +261,7 @@ export function ShareModal({
             }
           });
 
-    return { flatHtmls, parts };
+    return { flatNodes, flatHtmls, parts };
   }, [blocks, deselected, viewMode]);
 
   function toggleBlock(i: number) {
@@ -183,21 +292,68 @@ export function ShareModal({
     if (!wrap) return;
     const nodes = Array.from(wrap.children) as HTMLElement[];
     if (nodes.length !== parts.length) return;
+
+    // 表头行高度按 groupId 预取一次，跨页重复时直接复用（口径与首页表头一致）。
+    const headerByGroup = new Map<number, { part: Part; h: number }>();
+    nodes.forEach((n, i) => {
+      const p = parts[i];
+      if (p.kind === "block" && p.table?.isHeader) {
+        headerByGroup.set(p.table.groupId, { part: p, h: n.offsetHeight + BLOCK_GAP });
+      }
+    });
+
     const result: Part[][] = [];
+    const heights: number[] = [];
     let cur: Part[] = [];
     let height = 0;
-    nodes.forEach((node, i) => {
-      const h = node.offsetHeight + BLOCK_GAP;
-      if (cur.length > 0 && height + h > CONTENT_MAX) {
+    const closePage = () => {
+      if (cur.length) {
         result.push(cur);
+        // 内容高度 = 各块高度之和（含 gap）去掉最后一个块后面的 gap。
+        heights.push(Math.max(0, height - BLOCK_GAP));
         cur = [];
         height = 0;
       }
-      cur.push(parts[i]);
+    };
+
+    nodes.forEach((node, i) => {
+      const p = parts[i];
+      const h = node.offsetHeight + BLOCK_GAP;
+
+      // 表格 part 单独处理：表头是整表起点；表体行放不下断页时，上一页已有这张表则新页先重复表头。
+      if (p.kind === "block" && p.table) {
+        const g = p.table.groupId;
+        if (p.table.isHeader) {
+          if (cur.length > 0 && height + h > CONTENT_MAX) closePage();
+          cur.push(p);
+          height += h;
+        } else {
+          if (cur.length > 0 && height + h > CONTENT_MAX) {
+            const pageHasGroup = cur.some(
+              (x) => x.kind === "block" && x.table?.groupId === g
+            );
+            closePage();
+            const hdr = headerByGroup.get(g);
+            if (hdr && pageHasGroup) {
+              cur.push(hdr.part);
+              height = hdr.h;
+            }
+          }
+          cur.push(p);
+          height += h;
+        }
+        return;
+      }
+
+      // title / label / 普通块 / footer：保持原逻辑。
+      if (cur.length > 0 && height + h > CONTENT_MAX) closePage();
+      cur.push(p);
       height += h;
     });
-    if (cur.length > 0) result.push(cur);
+
+    closePage();
     setPages(result);
+    setPageHeights(heights);
   }, [parts, flatHtmls, editTitle, ratioKey, CONTENT_MAX]);
 
   // 预览按容器宽度等比缩小，让整张图完整可见（不横向滚动、不放大画幅）。
@@ -249,6 +405,25 @@ export function ShareModal({
     );
   }
 
+  // 每页的渲染单元：把同一张表在本页的「表头 + 若干行」合并回一个 <table>（避免每行小表格带间隙）。
+  const pageUnits = useMemo(
+    () => pages.map((page) => buildPageUnits(page, flatNodes)),
+    [pages, flatNodes]
+  );
+
+  function renderUnit(unit: RenderUnit) {
+    if (unit.kind === "table") {
+      return (
+        <div
+          className="share-content"
+          style={{ color: bg.text }}
+          dangerouslySetInnerHTML={{ __html: unit.html }}
+        />
+      );
+    }
+    return renderPart(unit.part);
+  }
+
   async function download() {
     if (pages.length === 0) return;
     setBusy(true);
@@ -287,7 +462,7 @@ export function ShareModal({
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg px-2 py-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            className="rounded-lg px-2 py-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
             aria-label="关闭"
           >
             ✕
@@ -303,7 +478,7 @@ export function ShareModal({
                 <button
                   key={b.key}
                   onClick={() => setBgKey(b.key)}
-                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors ${
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm transition-colors ${
                     bgKey === b.key
                       ? "bg-teal-50 ring-2 ring-teal-300"
                       : "border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
@@ -327,7 +502,7 @@ export function ShareModal({
                 <button
                   key={r.key}
                   onClick={() => setRatioKey(r.key)}
-                  className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${
+                  className={`rounded-lg px-3 py-2 text-sm transition-colors ${
                     ratioKey === r.key
                       ? "bg-teal-50 text-teal-700 ring-2 ring-teal-300"
                       : "border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
@@ -373,7 +548,7 @@ export function ShareModal({
               value={editTitle}
               onChange={(e) => setEditTitle(e.target.value)}
               placeholder="标题"
-              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-800 focus:border-teal-500 focus:outline-none"
+              className="w-full rounded-lg border border-zinc-200 px-3 py-2.5 text-sm font-medium text-zinc-800 focus:border-teal-500 focus:outline-none placeholder:text-sm"
             />
           </div>
 
@@ -422,14 +597,16 @@ export function ShareModal({
               {pages.length === 0 ? (
                 <p className="py-6 text-center text-xs text-zinc-400">生成预览中…</p>
               ) : (
-                pages.map((page, pi) => (
+                pages.map((_, pi) => {
+                  const pageH = (pageHeights[pi] ?? 0) + PAGE_PADDING * 2;
+                  return (
                   <div key={pi} className="w-full">
                     <p className="mb-1 text-[11px] text-zinc-400">第 {pi + 1} 页</p>
                     <div
                       className="overflow-hidden"
                       style={{
                         width: PAGE_WIDTH * previewScale,
-                        height: PAGE_HEIGHT * previewScale,
+                        height: pageH * previewScale,
                       }}
                     >
                       <div
@@ -445,25 +622,19 @@ export function ShareModal({
                           className="flex flex-col overflow-hidden"
                           style={{
                             width: PAGE_WIDTH,
-                            height: PAGE_HEIGHT,
+                            height: pageH,
                             ...bgStyle,
                             color: bg.text,
                             fontFamily: FONT,
                           }}
                         >
                           <div
-                            className={`flex flex-1 flex-col p-8 ${viewMode === "flat" ? "share-flat" : ""}`}
+                            className={`flex flex-col p-8 ${viewMode === "flat" ? "share-flat" : ""}`}
                             style={{ gap: BLOCK_GAP }}
                           >
-                            {page.map((part, i) => (
-                              <div
-                                key={i}
-                                style={{
-                                  overflow: "hidden",
-                                  marginTop: part.kind === "footer" ? "auto" : undefined,
-                                }}
-                              >
-                                {renderPart(part)}
+                            {pageUnits[pi].map((unit, i) => (
+                              <div key={i} style={{ overflow: "hidden" }}>
+                                {renderUnit(unit)}
                               </div>
                             ))}
                           </div>
@@ -471,7 +642,8 @@ export function ShareModal({
                       </div>
                     </div>
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
@@ -501,14 +673,14 @@ export function ShareModal({
         <footer className="flex gap-2 border-t border-zinc-100 px-4 py-3">
           <button
             onClick={onClose}
-            className="flex-1 rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-50"
+            className="flex-1 rounded-lg border border-zinc-200 px-4 py-2.5 text-sm text-zinc-600 hover:bg-zinc-50"
           >
             取消
           </button>
           <button
             onClick={download}
             disabled={busy || pages.length === 0}
-            className="flex-1 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+            className="flex-1 rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
           >
             {busy ? "生成中…" : pages.length > 1 ? `下载 ${pages.length} 张` : "下载图片"}
           </button>

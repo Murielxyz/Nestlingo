@@ -4,22 +4,20 @@
 // 替代原生 <audio>，素材观看页跟笔记内嵌的音频共用一套，观感一致。
 
 import { useEffect, useRef, useState } from "react";
-import { Play, Pause, RotateCcw, RotateCw, Volume2, VolumeX, Music, ExternalLink } from "lucide-react";
+import { Play, Pause, RotateCcw, RotateCw, Volume2, VolumeX, Music } from "lucide-react";
 
 /** 播客风或通用音频播放器（src 换时自动复位；进度条可拖；±15/30s；倍速 1/1.25/1.5/2；静音）。
- *  openHref：原始链接，给「打开原始 App / 原文」入口（手机上可直接跳去原始播客 App）。 */
+ *  「打开原始链接」由调用方放在播放器外（贴近播放器），本组件不再内置。 */
 export function PodcastAudioPlayer({
   src,
   title,
   subtitle,
   cover,
-  openHref,
 }: {
   src: string;
   title: string;
   subtitle?: string | null;
   cover?: string | null;
-  openHref?: string | null;
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -73,41 +71,27 @@ export function PodcastAudioPlayer({
     return `${h > 0 ? h + ":" : ""}${mm}:${String(sec).padStart(2, "0")}`;
   };
 
-  const btn =
-    "flex h-9 w-9 items-center justify-center rounded-full text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-white";
+  const smallBtn =
+    "flex h-8 w-8 items-center justify-center rounded-full text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-white sm:h-9 sm:w-9";
 
   return (
-    <div className="flex flex-col gap-5 bg-zinc-900 px-5 py-8 sm:flex-row sm:items-center sm:gap-6 sm:px-8">
+    <div className="flex flex-col gap-4 bg-zinc-900 px-4 py-6 sm:flex-row sm:items-center sm:gap-6 sm:px-8 sm:py-8">
       {/* 封面 */}
       <div className="mx-auto shrink-0 sm:mx-0">
         {cover ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={cover} alt="" className="h-32 w-32 rounded-2xl object-cover shadow-xl" loading="lazy" />
+          <img src={cover} alt="" className="h-24 w-24 rounded-2xl object-cover shadow-xl sm:h-32 sm:w-32" loading="lazy" />
         ) : (
-          <div className="flex h-32 w-32 items-center justify-center rounded-2xl bg-zinc-800 text-zinc-500">
-            <Music className="h-12 w-12" />
+          <div className="flex h-24 w-24 items-center justify-center rounded-2xl bg-zinc-800 text-zinc-500 sm:h-32 sm:w-32">
+            <Music className="h-10 w-10 sm:h-12 sm:w-12" />
           </div>
         )}
       </div>
 
       <div className="min-w-0 flex-1">
-        <div className="flex items-start justify-between gap-2">
-          <p className="truncate text-base font-semibold text-white" title={title}>
-            {title}
-          </p>
-          {openHref && (
-            <a
-              href={openHref}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-zinc-800 px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-white"
-              title="打开原始链接（手机上可跳去原始 App）"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              原始链接
-            </a>
-          )}
-        </div>
+        <p className="truncate text-base font-semibold text-white" title={title}>
+          {title}
+        </p>
         {subtitle && <p className="mt-0.5 truncate text-xs text-zinc-400">{subtitle}</p>}
 
         {/* 进度条：可拖到任意位置 */}
@@ -128,11 +112,11 @@ export function PodcastAudioPlayer({
         </div>
 
         {/* 控制行 */}
-        <div className="mt-3 flex items-center gap-1">
-          <button onClick={cycleRate} className="inline-flex h-9 min-w-9 items-center justify-center rounded-full px-2 text-xs font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white" title="倍速">
+        <div className="mt-3 flex items-center justify-center gap-0.5 sm:justify-start sm:gap-1">
+          <button onClick={cycleRate} className="inline-flex h-8 min-w-8 items-center justify-center rounded-full px-2 text-xs font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white sm:h-9 sm:min-w-9" title="倍速">
             {rate}x
           </button>
-          <button onClick={() => skip(-15)} className={btn} title="回退 15 秒" aria-label="回退 15 秒">
+          <button onClick={() => skip(-15)} className={smallBtn} title="回退 15 秒" aria-label="回退 15 秒">
             <span className="relative">
               <RotateCcw className="h-5 w-5" />
               <span className="absolute inset-0 flex items-center justify-center text-[8px] font-bold text-zinc-300">15</span>
@@ -140,18 +124,18 @@ export function PodcastAudioPlayer({
           </button>
           <button
             onClick={toggle}
-            className="mx-1 flex h-14 w-14 items-center justify-center rounded-full bg-teal-600 text-white shadow-lg transition-colors hover:bg-teal-700"
+            className="mx-1 flex h-12 w-12 items-center justify-center rounded-full bg-teal-600 text-white shadow-lg transition-colors hover:bg-teal-700 sm:h-14 sm:w-14"
             aria-label={playing ? "暂停" : "播放"}
           >
-            {playing ? <Pause className="h-7 w-7" /> : <Play className="ml-0.5 h-7 w-7" />}
+            {playing ? <Pause className="h-6 w-6 sm:h-7 sm:w-7" /> : <Play className="ml-0.5 h-6 w-6 sm:h-7 sm:w-7" />}
           </button>
-          <button onClick={() => skip(30)} className={btn} title="快进 30 秒" aria-label="快进 30 秒">
+          <button onClick={() => skip(30)} className={smallBtn} title="快进 30 秒" aria-label="快进 30 秒">
             <span className="relative">
               <RotateCw className="h-5 w-5" />
               <span className="absolute inset-0 flex items-center justify-center text-[8px] font-bold text-zinc-300">30</span>
             </span>
           </button>
-          <button onClick={toggleMute} className={btn} title="静音" aria-label="静音">
+          <button onClick={toggleMute} className={smallBtn} title="静音" aria-label="静音">
             {muted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
           </button>
         </div>

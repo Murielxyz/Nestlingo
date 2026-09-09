@@ -11,7 +11,7 @@ export function NewNoteButton({
   variant = "icon",
 }: {
   folderId?: string | null;
-  variant?: "icon" | "primary";
+  variant?: "icon" | "primary" | "ghost";
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -43,16 +43,31 @@ export function NewNoteButton({
     );
   }
 
-  // 侧栏 / 手机端顶部的图标按钮。
+  // 侧栏 / 手机端工具栏的图标按钮（带描边，和旁边的搜索框 / 新建文件夹按钮一致）。
+  if (variant === "icon") {
+    return (
+      <button
+        onClick={createNote}
+        disabled={busy}
+        title="新建笔记"
+        aria-label="新建笔记"
+        className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg border border-zinc-200 px-1.5 text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-60"
+      >
+        <FilePlus2 className="h-5 w-5" />
+      </button>
+    );
+  }
+
+  // 次级页导航条上的「+」操作：和返回箭头同体量、无色块描边，与左侧标题协调（不顶一格边框盒）。
   return (
     <button
       onClick={createNote}
       disabled={busy}
       title="新建笔记"
       aria-label="新建笔记"
-      className="rounded-lg border border-zinc-200 px-2.5 py-2 text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-60"
+      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-teal-600 transition-colors hover:bg-teal-50 disabled:opacity-60"
     >
-      <FilePlus2 className="h-4 w-4" />
+      <FilePlus2 className="h-5 w-5" />
     </button>
   );
 }

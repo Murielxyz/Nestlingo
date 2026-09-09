@@ -288,7 +288,7 @@ export function ImportMaterialModal({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="搜索笔记标题…"
-                className="w-full rounded-lg border border-zinc-200 py-1.5 pl-8 pr-3 text-sm focus:border-teal-500 focus:outline-none"
+                className="w-full rounded-lg border border-zinc-200 py-1.5 pl-8 pr-3 text-sm focus:border-teal-500 focus:outline-none placeholder:text-sm"
               />
             </div>
             <div className="max-h-64 space-y-1 overflow-y-auto">

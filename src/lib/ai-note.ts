@@ -54,18 +54,28 @@ function grammarBack(explanation: string, conjugations: GrammarConjugation[]): s
   return parts.filter(Boolean).join("  ");
 }
 
-/** 一条「词：释义  拓展」列表项（生词 / 例句 / 语法共用）。
+/** 一行「词：释义  拓展」文本（生词 / 例句 / 语法共用）。
  *  拓展用两个空格接在释义后面：parseCards 的 wrapBackSpaces 会把双空格拆成换行，
  *  于是转成闪卡时拓展落到背面释义的下一行，而不是跟释义挤在同一行（避免括号混淆）。 */
-function item(front: string, back: string, extra: string): JSONContent {
-  // 换行折成双空格：callout 里的列表项是单行文本，转成闪卡时 parseCards 会把双空格再拆回换行，
+export function itemLine(front: string, back: string, extra: string): string {
+  // 换行折成双空格：行是单行文本，转成闪卡时 parseCards 会把双空格再拆回换行，
   // 于是「翻译\n词1：释义\n词2：释义」这类多行背面能原样存进笔记、又在背面按行显示。
   const b = back.replace(/\n/g, "  ");
   const e = extra.replace(/\n/g, "  ");
   let line = front || b || "";
   if (front && b) line = `${front}：${b}`;
   if (e) line = `${line}  ${e}`;
-  return { type: "listItem", content: [para(line)] };
+  return line;
+}
+
+/** 一条「词：释义  拓展」列表项（生词 / 例句 / 语法共用）。 */
+export function item(front: string, back: string, extra: string): JSONContent {
+  return { type: "listItem", content: [para(itemLine(front, back, extra))] };
+}
+
+/** 一段「词：释义  拓展」普通段落（用户记笔记不用列表时的变体，纯文本输出与 item() 一致）。 */
+function paraItem(front: string, back: string, extra: string): JSONContent {
+  return para(itemLine(front, back, extra));
 }
 
 function bulletList(items: JSONContent[]): JSONContent {
@@ -360,20 +370,33 @@ export type AssistantPoint = {
   front: string;
   /** 生词=释义；例句=翻译；语法=说明；原文=逐段译文（段数与 front 一致，用换行分隔）。 */
   back: string;
-  /** 生词=搭配/例句；例句=用法说明；语法=例句；原文=空。 */
+  /** 生词=读音（泰语罗马音带声调、日语假名、韩语罗马转写、中文拼音、英语音标）；其余类型忽略。 */
+  reading?: string;
+  /** 生词=例句（一个用原语言写的完整句子）；例句=用法说明；语法=例句；原文=空。 */
   extra: string;
+  /** 生词=搭配（常用搭配 / 词组，合并写在一起）；其余类型忽略。 */
+  note?: string;
   /** 语法点的接续规则（日语必填，其它语言可空）；其余类型忽略。 */
   conjugations?: GrammarConjugation[];
 };
 
 /** 学伴的知识点 → 一组 callout 块（按类型分组；article 逐段配翻译）。
  *  用于「加入笔记」逐块插入，格式与手写精读一致，因此也能被「转成闪卡」识别。 */
-export function pointsToNoteContent(points: AssistantPoint[]): JSONContent[] {
+export function pointsToNoteContent(
+  points: AssistantPoint[],
+  opts?: { list?: boolean }
+): JSONContent[] {
+  // list:true（默认）= 每条一个 listItem 包进 bulletList（语伴旧路径）；list:false = 每条一个普通段落（用户记笔记不用列表）。
+  const asList = opts?.list ?? true;
   const blocks: JSONContent[] = [];
   const words = points.filter((p) => p.kind === "word");
   const sentences = points.filter((p) => p.kind === "example");
   const grammar = points.filter((p) => p.kind === "grammar");
   const articles = points.filter((p) => p.kind === "article");
+
+  // 把若干「front/back/extra」行按 list 包成 listItem 数组或段落数组。
+  const rows = (lines: { front: string; back: string; extra: string }[]): JSONContent[] =>
+    lines.map((l) => (asList ? item(l.front, l.back, l.extra) : paraItem(l.front, l.back, l.extra)));
 
   for (const a of articles) {
     const frontParas = parasOf(a.front);
@@ -389,45 +412,50 @@ export function pointsToNoteContent(points: AssistantPoint[]): JSONContent[] {
   }
 
   if (words.length) {
-    blocks.push(
-      callout("word", [
-        bulletList(
-          words.map((w) => item(clean(w.front), clean(w.back), clean(w.extra)))
-        ),
-      ])
-    );
+    const items = words.map((w) => ({
+      // 读音统一放背面（与「解释」按钮 / 「收录到闪卡」一致），正面只留原词。
+      front: clean(w.front),
+      // 释义里的多义项若用换行分隔，折成顿号保持同一行（转成闪卡时才不会多出一行孤立的词）；
+      // 读音作为背面第二行「读音：…」跟在释义后（itemLine 折成双空格，转卡时拆回换行）。
+      back: [
+        clean(w.back).replace(/\s*\n+\s*/g, "、"),
+        clean(w.reading) ? `读音：${clean(w.reading)}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      extra: [
+        clean(w.note) ? `搭配：${clean(w.note)}` : "",
+        clean(w.extra) ? `例句：${clean(w.extra)}` : "",
+      ]
+        .filter(Boolean)
+        .join("  "),
+    }));
+    const nodes = rows(items);
+    blocks.push(callout("word", asList ? [bulletList(nodes)] : nodes));
   }
   if (sentences.length) {
-    blocks.push(
-      callout("example", [
-        bulletList(
-          sentences.map((s) =>
-            item(clean(s.front), clean(s.back), clean(s.extra))
-          )
-        ),
-      ])
-    );
+    const items = sentences.map((s) => ({
+      front: clean(s.front),
+      back: clean(s.back),
+      extra: clean(s.extra),
+    }));
+    const nodes = rows(items);
+    blocks.push(callout("example", asList ? [bulletList(nodes)] : nodes));
   }
   if (grammar.length) {
-    blocks.push(
-      callout("grammar", [
-        bulletList(
-          grammar.map((g) =>
-            item(
-              clean(g.front),
-              grammarBack(
-                clean(g.back),
-                (g.conjugations ?? []).map((c) => ({
-                  rule: clean(c.rule),
-                  example: clean(c.example),
-                }))
-              ),
-              clean(g.extra) ? `例：${clean(g.extra)}` : ""
-            )
-          )
-        ),
-      ])
-    );
+    const items = grammar.map((g) => ({
+      front: clean(g.front),
+      back: grammarBack(
+        clean(g.back),
+        (g.conjugations ?? []).map((c) => ({
+          rule: clean(c.rule),
+          example: clean(c.example),
+        }))
+      ),
+      extra: clean(g.extra) ? `例：${clean(g.extra)}` : "",
+    }));
+    const nodes = rows(items);
+    blocks.push(callout("grammar", asList ? [bulletList(nodes)] : nodes));
   }
 
   return blocks;

@@ -10,11 +10,14 @@ export function PageHeader({
   title,
   backHref,
   actions,
+  size = "xl",
   className = "",
 }: {
   title: ReactNode;
   /** 传了才渲染返回箭头；一级页通常不传。 */
   backHref?: string;
+  /** 标题字号：一级页「xl」(text-2xl, 24px)，次级页「lg」(text-lg, 18px) 做小、主次分明。 */
+  size?: "xl" | "lg";
   /** 右侧动作区（按钮 / ⋯ 菜单）。 */
   actions?: ReactNode;
   className?: string;
@@ -24,10 +27,14 @@ export function PageHeader({
       {backHref ? (
         <BackButton
           fallback={backHref}
-          className="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
+          className="icon-btn text-xl"
         />
       ) : null}
-      <h1 className="min-w-0 flex-1 truncate text-2xl font-bold text-zinc-900">
+      <h1
+        className={`min-w-0 flex-1 truncate font-bold text-zinc-900 ${
+          size === "xl" ? "text-2xl" : "text-lg"
+        }`}
+      >
         {title}
       </h1>
       {actions ? (

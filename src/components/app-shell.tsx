@@ -3,16 +3,15 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { NotebookPen, RefreshCw, Layers, Settings, Inbox } from "lucide-react";
+import { NotebookPen, RefreshCw, Settings, MessageCircleHeart } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { BrandMark } from "./brand-mark";
 
 const NAV_ITEMS: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/notes", label: "笔记", icon: NotebookPen },
-  { href: "/review", label: "复习", icon: RefreshCw },
-  { href: "/cards", label: "闪卡", icon: Layers },
-  { href: "/materials", label: "素材", icon: Inbox },
+  { href: "/review", label: "闪卡", icon: RefreshCw },
+  { href: "/companion", label: "语伴", icon: MessageCircleHeart },
   { href: "/settings", label: "设置", icon: Settings },
 ];
 
@@ -46,6 +45,14 @@ export function AppShell({
   // ?theme=…）：沉浸式专注背诵，移动端底部导航一并隐藏；复习主页（无参数）仍保留。
   const isReviewSession = pathname === "/review" && searchParams.size > 0;
 
+  // 语伴对话页铺满全屏：不套 max-w 和留白（和笔记区一样）。
+  const isFullBleed = isNotes || pathname === "/companion";
+
+  // 这些页面在内容内部自己算了「避让底部导航」的高度（或本就无底部导航），
+  // 外层 main 不再叠一层 pb，否则会把页面撑高出一截、产生整页滚动的错觉（标题跟着滑走）。
+  const reservesBottomEnd =
+    isNotes || isReviewSession || isFullBleed;
+
   // 移动端带 sticky 标题栏的页面：标题吸顶且自带安全区 padding，main 不再叠顶部安全区留白，
   // 否则标题上方会多一段透明空隙、滚动内容从那里渗入。
   // 复习主页 + 会话子页（scope/mode/note/theme…）现在都吸顶，其余次级页（单卡/主题/素材/合集/设置/笔记闪卡）亦然。
@@ -54,8 +61,8 @@ export function AppShell({
     pathname === "/review" ||
     pathname === "/cards" ||
     pathname.startsWith("/cards/") ||
-    pathname === "/materials" ||
-    pathname.startsWith("/materials/") ||
+    pathname === "/companion" ||
+    pathname.startsWith("/companion/") ||
     pathname === "/settings" ||
     pathname.startsWith("/groups/") ||
     /^\/notes\/[^/]+\/cards$/.test(pathname);
@@ -86,7 +93,7 @@ export function AppShell({
       const due = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m).getTime();
       const todayKey = now.toDateString();
       if (now.getTime() >= due && localStorage.getItem("ln_reminder") !== todayKey) {
-        new Notification("语巢 · 复习提醒", { body: "该复习今天的单词啦" });
+        new Notification("语巢 · 学习提醒", { body: "该学今天的单词啦" });
         localStorage.setItem("ln_reminder", todayKey);
       }
     })();
@@ -111,7 +118,7 @@ export function AppShell({
           {collapsed ? (
             <button
               onClick={() => setCollapsed(false)}
-              className="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
               aria-label="展开菜单"
               title="展开菜单"
             >
@@ -128,7 +135,7 @@ export function AppShell({
               </span>
               <button
                 onClick={() => setCollapsed(true)}
-                className="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
                 aria-label="收起菜单"
                 title="收起菜单"
               >
@@ -174,11 +181,11 @@ export function AppShell({
       </aside>
 
       {/* ===== 主内容区（移动端底部让出导航 + 底部安全区；顶部让出状态栏安全区） ===== */}
-      <main className={`transition-[padding] duration-200 ${collapsed ? "md:pl-14" : "md:pl-64"} ${hasStickyHeader ? "" : "pt-[max(1rem,env(safe-area-inset-top))]"} ${isNoteDetail || isReviewSession ? "pb-0" : "pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0"}`}>
-        {isNotes ? (
-          <div className="min-h-screen">{children}</div>
+      <main className={`transition-[padding] duration-200 ${collapsed ? "md:pl-14" : "md:pl-64"} ${hasStickyHeader ? "" : "pt-[max(1rem,env(safe-area-inset-top))]"} ${reservesBottomEnd ? "pb-0" : "pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0"}`}>
+        {isFullBleed ? (
+          <div className="min-h-[100dvh]">{children}</div>
         ) : (
-          <div className="mx-auto max-w-5xl px-4 md:px-8 py-6">{children}</div>
+          <div className="mx-auto max-w-3xl px-4 md:px-8 py-6">{children}</div>
         )}
       </main>
 

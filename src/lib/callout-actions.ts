@@ -108,11 +108,13 @@ export const CalloutActions = Extension.create({
   },
 });
 
-/** 执行「原文」callout 的一个动作（翻译 / 精读笔记 / 加假名）。编辑器组件通过 setCalloutActionHandler 接入。 */
+/** 执行「原文」callout 的一个动作（翻译 / 精读笔记 / 加假名）。编辑器组件通过 setCalloutActionHandler 接入。
+ *  `onTranslated`：翻译成功后再回掉一次（用于顺带翻译笔记标题）。 */
 export async function runCalloutAction(
   editor: Editor,
   action: CalloutAction,
-  pos: number
+  pos: number,
+  opts?: { onTranslated?: () => Promise<void> }
 ): Promise<void> {
   if (action === "toggleFurigana") {
     const node = editor.state.doc.nodeAt(pos);
@@ -132,6 +134,7 @@ export async function runCalloutAction(
   if (action === "translate") {
     try {
       await translateCallout(editor, pos);
+      await opts?.onTranslated?.();
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e));
     }

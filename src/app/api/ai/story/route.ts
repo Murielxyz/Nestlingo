@@ -46,7 +46,16 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "无效请求" }, { status: 400 });
   }
-  const cards = (body.cards ?? []).filter((c) => c?.front?.trim());
+  // 限制生词数量与单卡长度，防一次性塞几百张词把 prompt 撑爆。
+  const MAX_CARDS = 40;
+  const MAX_LEN = 200;
+  const cards = (body.cards ?? [])
+    .map((c) => ({
+      front: String(c?.front ?? "").trim().slice(0, MAX_LEN),
+      back: String(c?.back ?? "").trim().slice(0, MAX_LEN),
+    }))
+    .filter((c) => c.front)
+    .slice(0, MAX_CARDS);
   if (cards.length === 0) {
     return NextResponse.json({ error: "没有可用的生词" }, { status: 400 });
   }

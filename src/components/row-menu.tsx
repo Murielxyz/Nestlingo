@@ -74,9 +74,9 @@ export function RowMenu({ items }: { items: RowMenuItem[] }) {
         ref={btnRef}
         onClick={() => setOpen((o) => !o)}
         aria-label="更多操作"
-        className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
+        className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
       >
-        <MoreHorizontal className="h-4 w-4" />
+        <MoreHorizontal className="h-5 w-5" />
       </button>
       {open &&
         createPortal(
@@ -94,7 +94,7 @@ export function RowMenu({ items }: { items: RowMenuItem[] }) {
                   setOpen(false);
                   it.onClick();
                 }}
-                className={`block w-full px-3 py-2 text-left text-sm transition-colors ${
+                className={`block w-full px-3 py-2.5 text-left text-sm transition-colors ${
                   it.danger ? "text-red-600 hover:bg-red-50" : "text-zinc-700 hover:bg-zinc-50"
                 }`}
               >

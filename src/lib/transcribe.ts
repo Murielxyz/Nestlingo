@@ -103,9 +103,9 @@ export async function transcribeAudio(
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(
-      `转录失败（${provider.label} ${res.status}）：${errText.slice(0, 300)}`
-    );
+    // 上游错误体详情只落服务端日志，不回传给前端。
+    console.error(`[transcribe] ${provider.label} ${res.status}`, errText.slice(0, 1000));
+    throw new Error(`转录失败（${provider.label} ${res.status}），请稍后重试`);
   }
 
   const data = await res.json();

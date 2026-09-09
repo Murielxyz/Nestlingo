@@ -59,25 +59,30 @@ export async function POST() {
     return NextResponse.json({ error: "未登录" }, { status: 401 });
   }
 
+  // 限制单次整理的生词数，防图书量无界放大串行 AI 调用的成本与时长。
+  const MAX_CARDS = 500;
   const { data: cards, error: readErr } = await supabase
     .from("cards")
     .select("id, front, back")
     .eq("kind", "word")
     .order("position", { ascending: true })
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true })
+    .limit(MAX_CARDS + 1);
   if (readErr) {
     return NextResponse.json({ error: `读取生词失败：${readErr.message}` }, { status: 500 });
   }
   if (!cards?.length) {
     return NextResponse.json({ classified: 0, note: "还没有生词可整理。" });
   }
+  const truncated = cards.length > MAX_CARDS;
+  const targets = cards.slice(0, MAX_CARDS);
 
   const CHUNK = 60;
   const assignments: { id: string; theme: string }[] = [];
 
   try {
-    for (let i = 0; i < cards.length; i += CHUNK) {
-      const chunk = cards.slice(i, i + CHUNK);
+    for (let i = 0; i < targets.length; i += CHUNK) {
+      const chunk = targets.slice(i, i + CHUNK);
       const listText = chunk
         .map((c, j) => `${i + j + 1}. ${c.front} — ${c.back ?? ""}`)
         .join("\n");
@@ -109,5 +114,9 @@ export async function POST() {
   const counts: Record<string, number> = {};
   for (const a of assignments) counts[a.theme] = (counts[a.theme] ?? 0) + 1;
 
-  return NextResponse.json({ classified: assignments.length, themes: counts });
+  return NextResponse.json({
+    classified: assignments.length,
+    themes: counts,
+    note: truncated ? `生词较多，本次整理了前 ${MAX_CARDS} 张，其余可再次点击整理。` : undefined,
+  });
 }

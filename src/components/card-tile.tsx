@@ -23,6 +23,8 @@ export function CardTile({
   footer,
   menu = true,
   menuItems,
+  deleteLabel = "删除",
+  onDelete,
 }: {
   card: Card;
   /** 选择模式（批量）：卡面变成点选，右侧出勾选框；关闭「⋯」菜单。 */
@@ -35,6 +37,10 @@ export function CardTile({
   menu?: boolean;
   /** 自定义菜单项，传了则替换默认的「编辑 / 删除」（如主题页只给「移出」）。 */
   menuItems?: { label: string; onClick: () => void; danger?: boolean }[];
+  /** 「删除」菜单项文案（如错题集改「移出错题集」）。 */
+  deleteLabel?: string;
+  /** 覆盖默认「删除」动作（默认删除整张卡；传了则由调用方处理，如移出错题集）。 */
+  onDelete?: () => void;
 }) {
   const router = useRouter();
   const [flipped, setFlipped] = useState(false);
@@ -96,7 +102,7 @@ export function CardTile({
     }
   }
 
-  // 编辑态：就地改正面 / 背面，带「✨ AI 解释」。
+  // 编辑态：就地改正面 / 背面，操作（AI 解释 / 语言 / 取消 / 保存）右对齐同一行。
   if (editing) {
     return (
       <div className="space-y-2 rounded-xl border border-zinc-200 bg-white p-3">
@@ -105,21 +111,32 @@ export function CardTile({
           onChange={(e) => setFront(e.target.value)}
           placeholder="正面（要记的词）"
           autoFocus
-          className="w-full rounded-lg border border-zinc-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
+          className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none placeholder:text-sm"
         />
         <textarea
           value={back}
           onChange={(e) => setBack(e.target.value)}
           placeholder="背面（释义 / 读音，可换行加例句）"
           rows={3}
-          className="w-full rounded-lg border border-zinc-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
+          className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none placeholder:text-sm"
         />
-        <div className="flex items-center gap-2">
-          <label className="shrink-0 text-xs text-zinc-400">语言</label>
+        {aiError && <p className="text-xs text-red-600">{aiError}</p>}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={fillBack}
+            disabled={aiBusy || !front.trim()}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-medium text-violet-600 transition-colors hover:bg-violet-50 disabled:opacity-60"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            {aiBusy ? "AI 解释中…" : "AI 解释"}
+          </button>
           <select
             value={lang}
             onChange={(e) => setLang(e.target.value as Lang)}
-            className="rounded-lg border border-zinc-300 px-2 py-1 text-sm focus:border-teal-500 focus:outline-none"
+            title="语言"
+            aria-label="语言"
+            className="rounded-lg border border-zinc-300 px-2 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
           >
             {LANG_ORDER.map((l) => (
               <option key={l} value={l}>
@@ -127,27 +144,15 @@ export function CardTile({
               </option>
             ))}
           </select>
-        </div>
-        <button
-          type="button"
-          onClick={fillBack}
-          disabled={aiBusy || !front.trim()}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 px-3 py-1.5 text-xs font-medium text-violet-600 transition-colors hover:bg-violet-50 disabled:opacity-60"
-        >
-          <Sparkles className="h-3.5 w-3.5" />
-          {aiBusy ? "AI 解释中…" : "✨ AI 解释"}
-        </button>
-        {aiError && <p className="text-xs text-red-600">{aiError}</p>}
-        <div className="flex items-center gap-3 text-sm">
+          <button onClick={reset} className="text-sm text-zinc-500 hover:text-zinc-700">
+            取消
+          </button>
           <button
             onClick={saveEdit}
             disabled={busy}
-            className="text-teal-600 hover:text-teal-700 disabled:opacity-60"
+            className="text-sm font-medium text-teal-600 hover:text-teal-700 disabled:opacity-60"
           >
             {busy ? "保存中…" : "保存"}
-          </button>
-          <button onClick={reset} className="text-zinc-500 hover:text-zinc-700">
-            取消
           </button>
         </div>
       </div>
@@ -207,7 +212,7 @@ export function CardTile({
 
         <div className="mt-2 flex items-center justify-between">
           {footer ?? (
-            <p className="text-xs text-zinc-400">
+            <p className="text-sm text-zinc-400">
               {selecting ? "点选这张" : "点击翻面"}
             </p>
           )}
@@ -247,7 +252,7 @@ export function CardTile({
                         setMenuOpen(false);
                         it.onClick();
                       }}
-                      className={`flex w-full items-center gap-1.5 px-3 py-1.5 text-left ${
+                      className={`flex w-full items-center gap-1.5 px-3 py-2 text-left ${
                         it.danger ? "text-red-600 hover:bg-red-50" : "text-zinc-700 hover:bg-zinc-50"
                       }`}
                     >
@@ -261,18 +266,19 @@ export function CardTile({
                         setMenuOpen(false);
                         setEditing(true);
                       }}
-                      className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-zinc-700 hover:bg-zinc-50"
+                      className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-zinc-700 hover:bg-zinc-50"
                     >
                       <Pencil className="h-3.5 w-3.5" /> 编辑
                     </button>
                     <button
                       onClick={() => {
                         setMenuOpen(false);
-                        deleteCard();
+                        if (onDelete) onDelete();
+                        else deleteCard();
                       }}
-                      className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-red-600 hover:bg-red-50"
+                      className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-red-600 hover:bg-red-50"
                     >
-                      <Trash2 className="h-3.5 w-3.5" /> 删除
+                      <Trash2 className="h-3.5 w-3.5" /> {deleteLabel}
                     </button>
                   </>
                 )}

@@ -30,19 +30,32 @@ export function CardFront({
   reading?: string | null;
 }) {
   const segments = parseReading(reading);
-  if (!segments) return <>{text}</>;
-  return (
-    <>
-      {segments.map((seg, i) =>
-        seg.reading ? (
-          <ruby key={i} className="furigana">
-            {seg.text}
-            <rt>{seg.reading}</rt>
-          </ruby>
-        ) : (
-          <span key={i}>{seg.text}</span>
-        )
-      )}
-    </>
-  );
+  if (segments) {
+    return (
+      <>
+        {segments.map((seg, i) =>
+          seg.reading ? (
+            <ruby key={i} className="furigana">
+              {seg.text}
+              <rt>{seg.reading}</rt>
+            </ruby>
+          ) : (
+            <span key={i}>{seg.text}</span>
+          )
+        )}
+      </>
+    );
+  }
+  // 非 furigana 的纯字符串读音（泰语罗马音 / 日语假名 / 拼音 / 音标…）：
+  // 在词下方加一行小号灰字，展示「怎么读」，同时保持正面原词不变（不影响搜索 / 转卡）。
+  const plain = (reading ?? "").trim();
+  if (plain) {
+    return (
+      <>
+        <div>{text}</div>
+        <div className="text-sm font-normal text-zinc-400">{plain}</div>
+      </>
+    );
+  }
+  return <>{text}</>;
 }

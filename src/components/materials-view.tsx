@@ -23,6 +23,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { BottomSheet } from "./bottom-sheet";
 import { createClient } from "@/lib/supabase/client";
 import { LANG_ORDER, LANG_LABEL, LANG_COLOR, type Lang } from "@/lib/lang-detect";
 import { MATERIAL_TYPE_LABEL } from "@/lib/types";
@@ -131,11 +132,11 @@ type ColMeta = {
 };
 
 const chip =
-  "rounded-full px-3 py-1 text-xs font-medium transition-colors";
+  "rounded-full px-3 py-2 text-sm font-medium transition-colors";
 const chipOff = "text-zinc-500 hover:bg-zinc-100";
 const chipOn = "bg-teal-600 text-white";
 const tabBtn = (on: boolean) =>
-  `inline-flex items-center rounded-lg px-3.5 py-2 text-sm font-medium transition-colors ${
+  `inline-flex items-center rounded-lg px-3.5 py-2.5 text-sm font-medium transition-colors ${
     on ? "bg-teal-600 text-white shadow-sm" : "text-zinc-500 hover:bg-zinc-50"
   }`;
 
@@ -454,7 +455,7 @@ export function MaterialsView({
     <div>
       {/* ===== 标题 + 工具栏（同行：标题左，操作右） ===== */}
       <div className="page-header mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold text-zinc-900">素材</h1>
+        <h1 className="min-w-0 flex-1 truncate text-2xl font-bold text-zinc-900">素材</h1>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {/* 次要操作收进「⋯」菜单（桌面 + 移动统一，顶栏只留「收藏素材」主操作，不冗长） */}
           <div className="relative">
@@ -466,7 +467,7 @@ export function MaterialsView({
                 moreOpen ? "border-teal-600 text-teal-700" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"
               }`}
             >
-              {moreOpen ? <X className="h-4 w-4" /> : <MoreHorizontal className="h-4 w-4" />}
+              {moreOpen ? <X className="h-5 w-5" /> : <MoreHorizontal className="h-5 w-5" />}
             </button>
             {moreOpen && (
               <>
@@ -477,7 +478,7 @@ export function MaterialsView({
                       setMoreOpen(false);
                       setNewColOpen((v) => !v);
                     }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-50"
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-50"
                   >
                     <FolderPlus className="h-4 w-4" />
                     新建合集
@@ -489,7 +490,7 @@ export function MaterialsView({
                       setAiOpen(false);
                       setUploadOpen((v) => !v);
                     }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-50"
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-50"
                   >
                     <Upload className="h-4 w-4" />
                     上传文件
@@ -501,7 +502,7 @@ export function MaterialsView({
                       setUploadOpen(false);
                       setAiOpen((v) => !v);
                     }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-50"
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-50"
                   >
                     <Sparkles className="h-4 w-4" />
                     AI 生成
@@ -518,7 +519,7 @@ export function MaterialsView({
               setUploadOpen(false);
               setAddOpen((v) => !v);
             }}
-            className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
+            className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-3.5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
           >
             <Plus className="h-4 w-4" />
             收藏素材
@@ -527,24 +528,14 @@ export function MaterialsView({
       </div>
 
       {/* ===== 新建合集 / 收藏 / 上传 / AI 生成面板：紧贴顶栏按钮，位于 tab 之上 ===== */}
-      {newColOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setNewColOpen(false)}>
-          <div
-            className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-zinc-800">新合集</h3>
-              <button onClick={() => setNewColOpen(false)} className="rounded-lg px-2 py-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700" aria-label="关闭">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <form onSubmit={(e) => { e.preventDefault(); void createCollection(); }} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      {/* 新建合集：底部弹出面板（非居中弹窗），内容贴近面板。 */}
+      <BottomSheet open={newColOpen} onClose={() => setNewColOpen(false)} title="新合集">
+        <form onSubmit={(e) => { e.preventDefault(); void createCollection(); }} className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
               <input
                 value={newColName}
                 onChange={(e) => setNewColName(e.target.value)}
                 placeholder="新合集名（例如：法语播客 / 日语 N3 语法）"
-                className="min-w-0 flex-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-800 focus:border-teal-500 focus:outline-none"
+                className="min-w-0 flex-1 rounded-lg border border-zinc-200 px-3 py-2.5 text-sm text-zinc-800 focus:border-teal-500 focus:outline-none placeholder:text-sm"
               />
               <div className="flex shrink-0 items-center gap-2">
                 <select
@@ -570,17 +561,15 @@ export function MaterialsView({
                 <button
                   type="submit"
                   disabled={colBusy || !newColName.trim()}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-teal-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-teal-600 px-3.5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
                 >
                   {colBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                   新建
                 </button>
               </div>
             </form>
-            {colError && <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{colError}</p>}
-          </div>
-        </div>
-      )}
+        {colError && <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{colError}</p>}
+      </BottomSheet>
       {addOpen && <AddMaterialPanel collections={localCollections} onClose={() => setAddOpen(false)} />}
       {uploadOpen && <FileUploadPanel collections={localCollections} onClose={() => setUploadOpen(false)} />}
       {aiOpen && <AiGeneratePanel collections={localCollections} onClose={() => setAiOpen(false)} />}
@@ -610,7 +599,7 @@ export function MaterialsView({
           <div className="relative">
             <button
               onClick={() => setFilterOpen((v) => !v)}
-              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium transition-colors ${
                 activeCount > 0 || filterOpen
                   ? "bg-teal-600 text-white hover:bg-teal-700"
                   : "border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
@@ -671,11 +660,11 @@ export function MaterialsView({
         {/* 批量操作栏 */}
         {batchMode && (
           <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3">
-            <button onClick={toggleAllSel} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm font-medium text-teal-600 hover:bg-teal-50">
+            <button onClick={toggleAllSel} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm font-medium text-teal-600 hover:bg-teal-50">
               {selIcon(allSel())}
               {allSel() ? "全不选" : "全选"}
             </button>
-            <button onClick={() => setBatchMode(false)} className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-600 hover:bg-zinc-50">
+            <button onClick={() => setBatchMode(false)} className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-50">
               取消
             </button>
             {selMatIds.length > 0 && (
@@ -696,7 +685,7 @@ export function MaterialsView({
               <button
                 onClick={batchDelete}
                 disabled={busy}
-                className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
               >
                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                 删除选中（{sel.length}）
@@ -719,7 +708,7 @@ export function MaterialsView({
             }
           />
         ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {visibleCols.map((c) => {
               const rec = colMeta.get(c.id);
               const Icon = rec?.type ? TYPE_ICON[rec.type] ?? FileText : Folder;
@@ -743,7 +732,10 @@ export function MaterialsView({
                     />
                     {batchMode && (
                       <button
-                        onClick={() => toggleSel(`col:${c.id}`)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSel(`col:${c.id}`);
+                        }}
                         aria-label="选择合集"
                         className={`absolute right-2 top-2 drop-shadow ${sel.includes(`col:${c.id}`) ? "text-teal-600" : "text-zinc-300 hover:text-zinc-500"}`}
                       >
@@ -817,7 +809,10 @@ export function MaterialsView({
                 <div className="flex shrink-0 items-start gap-3">
                   {batchMode && (
                     <button
-                      onClick={() => toggleSel(`mat:${m.id}`)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleSel(`mat:${m.id}`);
+                      }}
                       aria-label="选择素材"
                       className={`mt-4 shrink-0 ${sel.includes(`mat:${m.id}`) ? "text-teal-600" : "text-zinc-300 hover:text-zinc-500"}`}
                     >

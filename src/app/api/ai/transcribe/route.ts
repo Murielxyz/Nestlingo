@@ -139,6 +139,7 @@ async function fetchYouTubeAudioTranscript(videoId: string): Promise<string> {
     "-m", "yt_dlp",
     "--cookies-from-browser", "chrome",
     "-f", "bestaudio",
+    "--max-filesize", "25m", // 下载阶段就限制大小，避免长视频整块下进内存后才被 25MB 检查拒掉
     "--no-playlist",
     "--no-warnings",
     "--output", outBase,

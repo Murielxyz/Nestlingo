@@ -6,8 +6,9 @@ import { CircleCheck, SkipForward, Sparkles, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { parseNote, type CardSection } from "@/lib/parse-sections";
 import type { ParsedCard } from "@/lib/parse-cards";
-import { detectCardLang, LANG_LABEL, LANG_ORDER, type Lang } from "@/lib/lang-detect";
+import { detectCardLang, cardLang, LANG_LABEL, LANG_ORDER, type Lang } from "@/lib/lang-detect";
 import type { RecognitionRules } from "@/lib/types";
+import { normalizeFront } from "@/lib/normalize-front";
 import type { FuriganaSegment } from "@/lib/furigana";
 
 const KIND_LABEL: Record<CardSection["kind"], string> = {
@@ -29,14 +30,6 @@ function withLang(items: ParsedCard[]): PreviewCard[] {
     back: c.back,
     lang: detectCardLang({ front: c.front, back: c.back }),
   }));
-}
-
-/** 去重比较时，把正面里「（读音）」这类括号内容过滤掉，只看词本身是否相同（如「สวัสดี（sà-wàt-dii）」≈「สวัสดี」）。 */
-function normalizeFront(front: string): string {
-  return front
-    .replace(/[（(][^（）()]*[）)]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 /** 批量给日语汉字正面补读音（汉字上方假名）：只处理含汉字的日语新卡，
@@ -106,6 +99,14 @@ export function ConvertToCards({
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiFilled, setAiFilled] = useState<Set<string>>(new Set());
+  // 「单卡 AI 解释」：一次只解释一张，用 `${si}:${ci}` 定位；错误按卡存红字。
+  const [explainingKey, setExplainingKey] = useState<string | null>(null);
+  const [explainErrors, setExplainErrors] = useState<Record<string, string>>({});
+  // 「收录到」：null = 本篇笔记（默认）；选一个已有合集则把新卡并进那个合集（按语言合并，不为零星内容单开合集）。
+  const [targetNoteId, setTargetNoteId] = useState<string | null>(null);
+  const [targets, setTargets] = useState<
+    { id: string; title: string; count: number; lang: string }[]
+  >([]);
 
   function applyBatchLang(v: string) {
     setBatchLang(v);
@@ -127,7 +128,7 @@ export function ConvertToCards({
     }
   }
 
-  // 打开时拉取这篇笔记已有的卡片正面，用于去重。
+  // 打开时拉取「目标合集」已有的卡片正面，用于去重（默认本笔记；选了别的合集则按那个合集去重）。
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -135,10 +136,76 @@ export function ConvertToCards({
       const { data } = await supabase
         .from("cards")
         .select("front")
-        .eq("note_id", noteId);
+        .eq("note_id", targetNoteId ?? noteId);
       if (cancelled) return;
       const fronts = new Set((data ?? []).map((c) => normalizeFront(c.front)));
       setExistingFronts(fronts);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [noteId, targetNoteId]);
+
+  // 打开时拉取可「收录进」的已有合集（排除本篇笔记），供「收录到」下拉选择。
+  // 直接在客户端查（queries.ts 是 server-only，不能在这里 import），按 note_id 聚合、卡数 + 主导语言。
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data: rows } = await supabase
+          .from("cards")
+          .select("note_id, front, back, lang")
+          .not("note_id", "is", null);
+        if (cancelled || !rows?.length) return;
+        const byNote = new Map<
+          string,
+          { count: number; langs: Map<Lang, number> }
+        >();
+        for (const r of rows) {
+          const id = r.note_id as string;
+          if (id === noteId) continue;
+          const e = byNote.get(id) ?? { count: 0, langs: new Map<Lang, number>() };
+          e.count++;
+          const l = cardLang({
+            lang: (r.lang ?? null) as string | null,
+            front: r.front as string,
+            back: (r.back ?? null) as string | null,
+          });
+          e.langs.set(l, (e.langs.get(l) ?? 0) + 1);
+          byNote.set(id, e);
+        }
+        if (byNote.size === 0) return;
+        const noteIds = Array.from(byNote.keys());
+        const { data: notes } = await supabase
+          .from("notes")
+          .select("id, title")
+          .in("id", noteIds);
+        if (cancelled) return;
+        const titleMap = new Map((notes ?? []).map((n) => [n.id, n.title]));
+        const list = Array.from(byNote.entries())
+          .map(([id, e]) => {
+            let best: Lang = "other";
+            let max = -1;
+            for (const [l, n] of e.langs) {
+              if (l === "other") continue;
+              if (n > max) {
+                best = l;
+                max = n;
+              }
+            }
+            return {
+              id,
+              title: titleMap.get(id) ?? "无标题",
+              count: e.count,
+              lang: best,
+            };
+          })
+          .sort((a, b) => b.count - a.count);
+        setTargets(list);
+      } catch {
+        /* 拉取失败就只留「本笔记」选项 */
+      }
     })();
     return () => {
       cancelled = true;
@@ -237,7 +304,7 @@ export function ConvertToCards({
       for (const c of s.cards) {
         if (!c.front.trim() || existingFronts.has(normalizeFront(c.front))) continue;
         rows.push({
-          note_id: noteId,
+          note_id: targetNoteId ?? noteId,
           front: c.front.trim(),
           back: c.back.trim(),
           kind: s.kind,
@@ -266,6 +333,8 @@ export function ConvertToCards({
       }
       setDone(true);
       router.refresh();
+      // 通知右侧闪卡侧栏（若开着）立即刷新。
+      window.dispatchEvent(new CustomEvent("ln-cards-changed"));
     } finally {
       setSaving(false);
     }
@@ -315,6 +384,40 @@ export function ConvertToCards({
     setAiBusy(false);
   }
 
+  // 单卡「AI 解释」：跟详情页 fillBack 一样，只解释这一张，把背面补全覆盖（仍可再改再入库）。
+  async function explainCard(si: number, ci: number) {
+    const key = `${si}:${ci}`;
+    const s = sections[si];
+    const c = s?.cards[ci];
+    if (!c || !c.front.trim() || explainingKey) return;
+    setExplainingKey(key);
+    setExplainErrors((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    try {
+      const res = await fetch("/api/ai/card-explain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ front: c.front, back: c.back, kind: s.kind }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "解释失败");
+      const explanation = String(data?.explanation ?? "").trim();
+      if (!explanation) throw new Error("AI 没有返回解释");
+      updateCard(si, ci, "back", explanation);
+    } catch (e) {
+      setExplainErrors((prev) => ({
+        ...prev,
+        [key]: e instanceof Error ? e.message : String(e),
+      }));
+    } finally {
+      setExplainingKey(null);
+    }
+  }
+
   const summary =
     allCards.length > 0
       ? `识别出 ${allCards.length} 张${dupCount > 0 ? `，跳过重复 ${dupCount} 张` : ""}`
@@ -330,7 +433,7 @@ export function ConvertToCards({
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg px-2 py-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            className="rounded-lg px-2 py-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
             aria-label="关闭"
           >
             ✕
@@ -345,7 +448,7 @@ export function ConvertToCards({
             </p>
             <button
               onClick={onClose}
-              className="mt-6 rounded-lg bg-teal-600 px-5 py-2 text-sm font-semibold text-white hover:bg-teal-700"
+              className="mt-6 rounded-lg bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700"
             >
               完成
             </button>
@@ -366,7 +469,7 @@ export function ConvertToCards({
                   <button
                     key={kind}
                     onClick={() => toggleKind(kind)}
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors ${
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
                       active
                         ? "border-teal-500 bg-teal-50 text-teal-700"
                         : "border-zinc-200 bg-white text-zinc-400"
@@ -385,6 +488,23 @@ export function ConvertToCards({
                   </button>
                 );
               })}
+            </div>
+
+            {/* 收录到：默认本笔记；有其它合集时可选并进去（按语言合并，不为零星内容单开合集） */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 px-4 py-2.5">
+              <span className="text-xs text-zinc-400">收录到：</span>
+              <select
+                value={targetNoteId ?? ""}
+                onChange={(e) => setTargetNoteId(e.target.value || null)}
+                className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-600 focus:border-teal-500 focus:outline-none"
+              >
+                <option value="">本笔记（这篇）</option>
+                {targets.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.title}（{t.count} 张 · {LANG_LABEL[t.lang as Lang] ?? t.lang}）
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* 批量改语言：通常整篇同一个语言，先一键设为该语言，再逐张微调 */}
@@ -411,7 +531,7 @@ export function ConvertToCards({
               <button
                 onClick={() => void fillAll()}
                 disabled={aiBusy || newCount <= 0}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 px-3 py-1.5 text-xs font-medium text-teal-700 transition-colors hover:bg-teal-50 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 px-3 py-2 text-xs font-medium text-teal-700 transition-colors hover:bg-teal-50 disabled:opacity-50"
               >
                 {aiBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                 AI 补全
@@ -472,6 +592,9 @@ export function ConvertToCards({
                                 back={c.back}
                                 lang={c.lang}
                                 ai={aiFilled.has(c.front)}
+                                explaining={explainingKey === `${si}:${ci}`}
+                                explainError={explainErrors[`${si}:${ci}`] ?? null}
+                                onExplain={() => explainCard(si, ci)}
                                 onChange={(field, value) => updateCard(si, ci, field, value)}
                                 onRemove={() => removeCard(si, ci)}
                               />
@@ -488,14 +611,14 @@ export function ConvertToCards({
             <footer className="flex gap-2 border-t border-zinc-100 px-4 py-3">
               <button
                 onClick={onClose}
-                className="flex-1 rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-50"
+                className="flex-1 rounded-lg border border-zinc-200 px-4 py-2.5 text-sm text-zinc-600 hover:bg-zinc-50"
               >
                 取消
               </button>
               <button
                 onClick={save}
                 disabled={saving || newCount <= 0}
-                className="flex-1 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+                className="flex-1 rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
               >
                 {saving ? "入库中…" : `确认入库 ${newCount} 张`}
               </button>
@@ -514,6 +637,9 @@ function CardDraft({
   back,
   lang,
   ai,
+  explaining,
+  explainError,
+  onExplain,
   onChange,
   onRemove,
 }: {
@@ -521,6 +647,9 @@ function CardDraft({
   back: string;
   lang: Lang;
   ai?: boolean;
+  explaining?: boolean;
+  explainError?: string | null;
+  onExplain: () => void;
   onChange: (field: "front" | "back" | "lang", value: string) => void;
   onRemove: () => void;
 }) {
@@ -531,7 +660,7 @@ function CardDraft({
           value={front}
           onChange={(e) => onChange("front", e.target.value)}
           placeholder="正面（要记的词）"
-          className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-900 focus:border-teal-500 focus:outline-none"
+          className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm font-medium text-zinc-900 focus:border-teal-500 focus:outline-none placeholder:text-sm"
         />
         {ai && (
           <span className="shrink-0 rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-600">
@@ -556,12 +685,23 @@ function CardDraft({
           onChange={(e) => onChange("back", e.target.value)}
           placeholder="背面（释义 / 读音，可换行加例句）"
           rows={2}
-          className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-600 focus:border-teal-500 focus:outline-none"
+          className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-600 focus:border-teal-500 focus:outline-none placeholder:text-sm"
         />
       </div>
-      <button onClick={onRemove} className="text-xs text-zinc-400 hover:text-red-600">
-        删除这一张
-      </button>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onExplain}
+          disabled={explaining || !front.trim()}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 px-2.5 py-1 text-xs font-medium text-violet-600 transition-colors hover:bg-violet-50 disabled:opacity-60"
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          {explaining ? "AI 解释中…" : "AI 解释"}
+        </button>
+        <button onClick={onRemove} className="text-xs text-zinc-400 hover:text-red-600">
+          删除这一张
+        </button>
+      </div>
+      {explainError && <p className="text-xs text-red-600">{explainError}</p>}
     </div>
   );
 }

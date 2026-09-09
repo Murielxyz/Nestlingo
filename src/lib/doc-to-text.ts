@@ -42,8 +42,10 @@ function blockText(node: JSONContent): string {
           : kind === "grammar"
             ? "语法"
             : kind === "article"
-              ? "原文"
-              : "生词";
+              ? "文章"
+              : kind === "note"
+                ? "备注"
+                : "生词";
       return `${label}\n` + (node.content ?? []).map(blockText).join("");
     }
     case "paragraph":

@@ -114,7 +114,7 @@ export function ThemeDetail({
         <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-teal-50">
           <Icon className="h-5 w-5 text-teal-600" />
         </span>
-        <h1 className="text-xl font-bold text-zinc-900">{label}</h1>
+        <h1 className="text-lg font-bold text-zinc-900">{label}</h1>
         <span className="text-xs text-zinc-400">{cards.length} 条</span>
         <div className="ml-auto flex items-center gap-1.5">
           <Link
@@ -131,7 +131,7 @@ export function ThemeDetail({
           </Link>
           <button
             onClick={() => setCollecting(true)}
-            className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
+            className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
           >
             <Plus className="h-4 w-4" />
             收录词
@@ -147,7 +147,7 @@ export function ThemeDetail({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={`搜索「${label}」里的词 / 例句 / 释义…`}
-            className="w-full rounded-xl border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm focus:border-teal-500 focus:outline-none"
+            className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-3 text-sm placeholder:text-sm focus:border-teal-500 focus:outline-none"
           />
         </div>
       )}

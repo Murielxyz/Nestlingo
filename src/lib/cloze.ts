@@ -1,6 +1,8 @@
 // 完形填空题库生成：从待复习卡片里，把「生词」挖进一句话里出题。
-// 优先用现成的语境句（例句 / 语法例 / 生词背面带例句）；没有语境句的生词会
-// 被记进 missing，交给会话端 AI 生成例句再挖空（带「AI 生成」标识）。
+// 优先用现成的语境句（例句卡 / 生词背面带「例句」），且只挖「要背的那个词」——
+// 正面里的「(读音)」括号先去掉、按词本身匹配，不把整个搭配词组挖空；去掉括号后
+// 仍是多词的短语/搭配（规则分不清该挖哪个词）就进 missing 交给 AI 现造例句。
+// 没有语境句的生词也进 missing，由会话端 AI 生成例句再挖空（带「AI 生成」标识）。
 
 import type { ReviewItem } from "@/lib/supabase/queries";
 import { detectLang, type Lang } from "@/lib/lang-detect";
@@ -30,6 +32,30 @@ export type MissingWord = {
   meaning: string;
   lang: Lang;
 };
+
+/** 生词正面可能带「(读音)」，挖空 / 匹配 / 分类都针对词本身（去掉括号读音）。 */
+export function clozeWord(front: string): string {
+  return front.replace(/[（(][^（）()]*[）)]/g, "").trim();
+}
+
+/** 一张卡是不是「生词」（完形填空只挖生词）：
+ *  明确 kind=word，或未分类且去掉「(读音)」后仍是单个词（无空格）。
+ *  去掉括号后仍含空格（短语/句子/搭配）不算生词，交给句子池或 AI。 */
+export function isWordCard(front: string, kind: string | null): boolean {
+  if (!front.trim()) return false;
+  if (kind === "word") return true;
+  if (kind === "example" || kind === "grammar") return false;
+  const w = clozeWord(front);
+  return w !== "" && !/\s/.test(w);
+}
+
+/** 一张卡的正面是否算「语境句」（可挖别人词进去）：kind=example，或未分类且去掉括号后仍多词。 */
+function isSentenceCard(front: string, kind: string | null): boolean {
+  if (kind === "example") return true;
+  if (kind !== null) return false;
+  const w = clozeWord(front);
+  return w !== "" && /\s/.test(w);
+}
 
 /** 找一个「看起来是一句话」的文本：要么明确是例句/语法，要么含空格（韩/拉丁）。 */
 function isSentenceLike(text: string): boolean {
@@ -66,14 +92,30 @@ type SentenceSource = {
   translation: string;
 };
 
-/** 生词背面经常是「释义 例：例句（译文）」——把释义和例句拆开：
- *  释义给答前「词义」提示，例句当作外语语境句，避免两者混在一起。 */
+/** 例句之后可能还有别的标签（拓展/搭配/相关…），这些不是例句、不该当题目。 */
+const EXAMPLE_TERMINATORS = [
+  "拓展", "搭配", "常用搭配", "相关", "相关词", "用法", "注意", "说明",
+  "接续", "接续规则", "规则", "读音", "发音", "音标", "拼音", "罗马音",
+  "释义", "意思", "含义", "解释", "词性", "词义", "译文", "翻译", "解析",
+  "长难句", "生词",
+];
+
+/** 生词背面经常是「释义 例句：例句（译文）拓展：搭配…」——把释义和例句拆开：
+ *  释义给答前「词义」提示，例句当作外语语境句，避免两者混在一起。
+ *  例句只取「例句：」后到下一个标签行 / 换行为止，不把「拓展/搭配」混进例句当题目。 */
 function splitWordBack(back: string): { meaning: string; example: string } {
   const m = /例(?:句)?\s*[：:]/.exec(back);
   if (!m || m.index === undefined) return { meaning: back.trim(), example: "" };
+  const meaning = back.slice(0, m.index).trim();
+  const rest = back.slice(m.index + m[0].length);
+  // 背面按标签分行 → 例句到换行为止；再在单行内切掉后续标签（旧双空格格式）。
+  const firstLine = rest.split(/\n/)[0];
+  const cut = firstLine.search(
+    new RegExp(`\\s{2,}(?:${EXAMPLE_TERMINATORS.join("|")})[：:]`)
+  );
   return {
-    meaning: back.slice(0, m.index).trim(),
-    example: back.slice(m.index + m[0].length).trim(),
+    meaning,
+    example: (cut >= 0 ? firstLine.slice(0, cut) : firstLine).trim(),
   };
 }
 
@@ -91,32 +133,25 @@ function pickSentence(
 
 /**
  * 把待复习卡片交给完形填空题生成器。
- * 只给「生词」出题（kind=word，或未分类且正面是单 token）。有语境句的 → items；
- * 没有语境句的 → missing（交给 AI 现造例句）。两者都不含就只在 missing 里。
+ * 只给「生词」出题；有语境句（含该词）且词是单个词 → 挖该词；多词搭配/无语境句 → missing（AI 造）。
  */
 export function buildClozeItems(items: ReviewItem[]): {
   items: ClozeItem[];
   missing: MissingWord[];
 } {
-  // 句子池：例句/语法带空格的正面 + 各卡背面（可能自带例句）——统一收集，外语类优先。
+  // 句子池：例句卡正面 + 未分类的句子卡正面 + 各卡背面「例句」——统一收集，外语类优先。
   // 背面无条件入池：只有真正「含该词」的背面才会被选中（释义不含目标词，天然不会误命中）。
   const pool: SentenceSource[] = [];
   for (const it of items) {
     const c = it.card;
     const front = c.front?.trim() ?? "";
     const back = c.back?.trim() ?? "";
-    // 只把「真句子」收进池：例句类正面，或正面含空格（韩/拉丁句子）。
-    // 生词的正面是单个词，收进来会变成「自己挖空自己」，必须排除。
-    if (front && (c.kind === "example" || isSentenceLike(front))) {
-      // 正面是目标语言句子，背面就是它的译文 → 拿来当答前提示。
+    if (front && isSentenceCard(front, c.kind)) {
       pool.push({ text: front, isForeign: true, translation: back });
     }
     if (back) {
       const { example } = splitWordBack(back);
-      // 生词背面「释义 例：…」→ 只用例句当外语语境句，别把释义跟例句混在一起；
-      // 没有拆分出来的例句（如纯译文 / 纯释义）维持原样，当作候选句。
       if (example) pool.push({ text: example, isForeign: true, translation: "" });
-      else pool.push({ text: back, isForeign: false, translation: "" });
     }
   }
 
@@ -127,32 +162,34 @@ export function buildClozeItems(items: ReviewItem[]): {
     const c = it.card;
     const front = c.front?.trim() ?? "";
     if (!front) continue;
-    const isWord = c.kind === "word" || (c.kind === null && !isSentenceLike(front));
-    if (!isWord) continue;
+    if (!isWordCard(front, c.kind)) continue;
 
-    const src = pickSentence(pool, front, used);
+    const word = clozeWord(front);
+    if (!word) continue;
     // 词义只取释义部分（去掉「例：…」），别让答前提示连例句一起闪出来。
     const meaning = splitWordBack(c.back ?? "").meaning;
-    if (!src) {
-      // 没有现成语境句 → 交给 AI 生成例句（会话端补齐）。
-      missing.push({
-        cardId: c.id,
-        word: front,
-        meaning,
-        lang: detectLang(front),
-      });
+
+    // 去掉括号后仍是「多词」（短语/搭配）→ 规则分不清该挖哪个词，交给 AI 只挖核心词。
+    if (/\s/.test(word)) {
+      missing.push({ cardId: c.id, word, meaning, lang: detectLang(word) });
       continue;
     }
-    const idx = matchIndex(src.text, front);
+
+    const src = pickSentence(pool, word, used);
+    if (!src) {
+      // 没有现成语境句 → 交给 AI 生成例句（会话端补齐）。
+      missing.push({ cardId: c.id, word, meaning, lang: detectLang(word) });
+      continue;
+    }
+    const idx = matchIndex(src.text, word);
     if (idx < 0) continue;
     used.add(src.text);
 
     out.push({
       cardId: c.id,
       sentence: src.text,
-      prompt:
-        src.text.slice(0, idx) + "＿＿＿＿" + src.text.slice(idx + front.length),
-      answer: src.text.slice(idx, idx + front.length),
+      prompt: src.text.slice(0, idx) + "＿＿＿＿" + src.text.slice(idx + word.length),
+      answer: src.text.slice(idx, idx + word.length),
       meaning,
       translation: src.translation,
       hint: c.kind === "grammar" ? front : "",

@@ -35,13 +35,21 @@ create table if not exists public.notes (
   user_id      uuid not null default auth.uid(),
   folder_id    uuid references public.folders(id) on delete set null,
   title        text not null default '',
+  cards_title  text, -- 闪卡合集显示名（改合集名不碰原始笔记标题；没单独设时展示 title）
   content      jsonb,
   content_text text,
   source_type  text,
+  pinned       boolean not null default false, -- 置顶：列表里浮到该文件夹顶部
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now(),
   deleted_at   timestamptz
 );
+
+-- 给已存在的库补 pinned 列（幂等；新建库上面的 create table 已含）
+alter table public.notes add column if not exists pinned boolean not null default false;
+
+-- 给已存在的库补 cards_title 列（闪卡合集显示名，幂等）
+alter table public.notes add column if not exists cards_title text;
 
 -- ============================================================
 -- 表 3：卡片 cards（挂在某篇笔记下，也可独立）
@@ -112,6 +120,9 @@ alter table public.user_settings add column if not exists recognition_rules json
 
 -- 给已存在的库补 hidden_themes 列（幂等）：用户隐藏（删除）的内置词群主题 key
 alter table public.user_settings add column if not exists hidden_themes text[] default '{}';
+
+-- 给已存在的库补 review_shuffle 列（幂等）：默认随机顺序背诵开关
+alter table public.user_settings add column if not exists review_shuffle boolean not null default false;
 
 -- 给已存在的库补「AI 模型」列（幂等）：每任务一个，null=用环境默认
 alter table public.user_settings add column if not exists ai_text_provider text;   -- 'claude' | 'deepseek'
@@ -340,3 +351,48 @@ drop policy if exists "materials_bucket_delete" on storage.objects;
 create policy "materials_bucket_delete" on storage.objects
   for delete to authenticated
   using (bucket_id = 'materials' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- ============================================================
+-- 表 11：AI 语伴产出记录 assistant_records
+--   kind:      note（回复正文）/ translate（翻译=原文+译文）/ 其他文字知识
+--   media_id:  媒体收藏关联素材（materials），文字收藏为 null
+--   note_id:   已导入到的笔记（删笔记置 null）
+--   favorited: 收藏时间（null = 未收藏）；本表仅存已收藏记录（与语伴会话的 localStorage 分离，
+--              会话可清空、收藏持久不动）
+-- ============================================================
+create table if not exists public.assistant_records (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null default auth.uid(),
+  kind       text not null default 'note',
+  prompt     text,
+  reply      text,
+  points     jsonb,
+  media_id   uuid references public.materials(id) on delete set null,
+  note_id    uuid references public.notes(id) on delete set null,
+  favorited  timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.assistant_records add column if not exists kind text;
+alter table public.assistant_records add column if not exists prompt text;
+alter table public.assistant_records add column if not exists reply text;
+alter table public.assistant_records add column if not exists points jsonb;
+alter table public.assistant_records add column if not exists media_id uuid;
+alter table public.assistant_records add column if not exists note_id uuid;
+alter table public.assistant_records add column if not exists favorited timestamptz;
+
+create index if not exists assistant_records_user_id_idx
+  on public.assistant_records (user_id);
+
+alter table public.assistant_records enable row level security;
+
+drop policy if exists "assistant_records_own" on public.assistant_records;
+create policy "assistant_records_own" on public.assistant_records
+  for all to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+drop trigger if exists assistant_records_set_updated_at on public.assistant_records;
+create trigger assistant_records_set_updated_at before update on public.assistant_records
+  for each row execute function public.set_updated_at();

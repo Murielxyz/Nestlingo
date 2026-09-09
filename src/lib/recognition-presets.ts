@@ -73,7 +73,6 @@ export const EMPTY_RULES: RecognitionRules = {
   extra: [],
   separator: null,
   calloutOnly: false,
-  reading: "back",
   wrapBackSpaces: true,
   splitBySemicolon: false,
   customRules: [],

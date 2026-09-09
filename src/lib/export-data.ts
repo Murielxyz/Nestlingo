@@ -22,19 +22,12 @@ function esc(cell: string): string {
   return cell;
 }
 
-/** 把闪卡导出为 CSV（带 BOM，Excel 打开中文不乱码）。 */
+/** 把闪卡导出为 CSV（带 BOM，Excel 打开中文不乱码）。只导「正面 / 背面」两列，不带表头。
+ *  不带表头：导入 Anki 时第一行就是数据，不会被当成一张卡，也无需在 Anki 里勾「第一行是字段名」。 */
 export function exportCardsCsv(cards: Card[], filename = "闪卡.csv") {
-  const header = ["正面", "背面", "类别", "标签"];
-  const rows = cards.map((c) => [
-    c.front,
-    c.back ?? "",
-    c.kind ?? "",
-    (c.tags ?? []).join(" "),
-  ]);
+  const rows = cards.map((c) => [c.front, c.back ?? ""]);
   const csv =
     "﻿" +
-    [header, ...rows]
-      .map((r) => r.map((cell) => esc(cell ?? "")).join(","))
-      .join("\n");
+    rows.map((r) => r.map((cell) => esc(cell ?? "")).join(",")).join("\n");
   downloadText(filename, csv, "text/csv");
 }

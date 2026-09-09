@@ -1,16 +1,19 @@
 @import "tailwindcss";
 
-/* ===== 语巢 设计系统（清新浅色治愈系 · sage-mint 鼠尾草薄荷绿） ===== */
+/* ===== 语巢 设计系统（清新浅色治愈系 · 莫兰迪低饱和，主题色可切换） ===== */
 :root {
-  --brand: oklch(0.62 0.10 165); /* 柔和鼠尾草薄荷绿主色 */
-  --brand-foreground: oklch(0.99 0.01 165);
-  --brand-soft: oklch(0.96 0.035 165);
-  --brand-soft-2: oklch(0.975 0.02 200);
+  /* 主题色相：默认鼠尾草薄荷绿(165)。设置页「外观」切换时写 data-theme 覆盖 --brand-hue，
+     让全站 bg-teal-* / text-teal-* / 品牌渐变 / 页面背景 一起换色。 */
+  --brand-hue: 165;
+  --brand: oklch(0.62 0.10 var(--brand-hue)); /* 主色 */
+  --brand-foreground: oklch(0.99 0.01 var(--brand-hue));
+  --brand-soft: oklch(0.96 0.035 var(--brand-hue));
+  --brand-soft-2: oklch(0.975 0.02 calc(var(--brand-hue) + 35));
   --ink: oklch(0.32 0.02 200); /* 正文深灰墨色（非纯黑） */
   --paper: oklch(0.99 0.005 200);
   --table-border: oklch(0.88 0.01 200);
 
-  /* 页面背景：顶部两角淡绿径向渐变 + paper 底色（body 与吸顶标题栏共用，保证融合） */
+  /* 页面背景：顶部两角淡色径向渐变 + paper 底色（body 与吸顶标题栏共用，保证融合） */
   --page-bg:
     radial-gradient(1100px 520px at 50% -12%, var(--brand-soft), transparent 62%),
     radial-gradient(900px 460px at 108% -6%, var(--brand-soft-2), transparent 58%),
@@ -20,18 +23,25 @@
   --foreground: var(--ink);
 }
 
-/* 用 sage-mint 重定义 teal 色阶，全站现有的 bg-teal-* / text-teal-* 自动变成品牌色 */
+/* 主题色相切换（设置页「外观」写 localStorage，layout 内联脚本在首屏前设 data-theme） */
+:root[data-theme="sage"] { --brand-hue: 165; }
+:root[data-theme="blue"] { --brand-hue: 235; }
+:root[data-theme="rose"] { --brand-hue: 15; }
+:root[data-theme="lavender"] { --brand-hue: 300; }
+:root[data-theme="oat"] { --brand-hue: 60; }
+
+/* 用主题色相重定义 teal 色阶，全站现有的 bg-teal-* / text-teal-* 自动变成品牌色 */
 @theme {
-  --color-teal-50: oklch(0.975 0.02 165);
-  --color-teal-100: oklch(0.94 0.035 165);
-  --color-teal-200: oklch(0.88 0.05 165);
-  --color-teal-300: oklch(0.80 0.07 165);
-  --color-teal-400: oklch(0.72 0.09 165);
-  --color-teal-500: oklch(0.66 0.10 165);
-  --color-teal-600: oklch(0.62 0.10 165);
-  --color-teal-700: oklch(0.52 0.09 165);
-  --color-teal-800: oklch(0.44 0.08 165);
-  --color-teal-900: oklch(0.36 0.07 165);
+  --color-teal-50: oklch(0.975 0.02 var(--brand-hue));
+  --color-teal-100: oklch(0.94 0.035 var(--brand-hue));
+  --color-teal-200: oklch(0.88 0.05 var(--brand-hue));
+  --color-teal-300: oklch(0.80 0.07 var(--brand-hue));
+  --color-teal-400: oklch(0.72 0.09 var(--brand-hue));
+  --color-teal-500: oklch(0.66 0.10 var(--brand-hue));
+  --color-teal-600: oklch(0.62 0.10 var(--brand-hue));
+  --color-teal-700: oklch(0.52 0.09 var(--brand-hue));
+  --color-teal-800: oklch(0.44 0.08 var(--brand-hue));
+  --color-teal-900: oklch(0.36 0.07 var(--brand-hue));
 
   /* 圆角统一到 iOS 观感：按钮/chip 12px、卡片/弹窗 16px、底部弹层顶部 20px */
   --radius-sm: 0.5rem; /* 8px */
@@ -51,10 +61,10 @@
   --color-brand-soft-2: var(--brand-soft-2);
   --color-ink: var(--ink);
   --color-paper: var(--paper);
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-    "Helvetica Neue", "Segoe UI", "PingFang SC", "Hiragino Sans GB",
-    "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans Thai", "Apple SD Gothic Neo",
-    "Malgun Gothic", sans-serif;
+  --font-sans: -apple-system, "SF Pro Text", "SF Pro Display", var(--font-inter),
+    BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans Thai",
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas,
     "Liberation Mono", monospace;
 }
@@ -63,10 +73,14 @@ body {
   background: var(--page-bg);
   background-attachment: fixed;
   color: var(--ink);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-    "Helvetica Neue", "Segoe UI", "PingFang SC", "Hiragino Sans GB",
-    "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans Thai",
+  font-family: -apple-system, "SF Pro Text", "SF Pro Display", var(--font-inter),
+    BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans Thai",
     "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  /* 文字抗锯齿平滑：苹果上是「细而锐」的关键，去掉默认的粗糊渲染，整体更像原生 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 /* 防 iOS Safari 双击/捏合缩放：双击不放大、输入框聚焦不自动放大 */
@@ -77,11 +91,32 @@ html {
 body {
   touch-action: manipulation;
 }
+
+/* 移动端整体放大一档：把根字号从 16px 提到 17px（接近 iOS 舒适阅读字号）。
+   所有基于 rem 的尺寸（标题/按钮/输入框/图标）成比例放大，布局关系不变，页面更透大气；
+   桌面端保持 16px，不影响三栏结构。 */
 @media (max-width: 767px) {
-  /* iOS 输入框字号 < 16px 会触发聚焦自动放大，移动端统一提到 16px */
-  input, select, textarea {
+  html {
+    font-size: 17px;
+  }
+}
+@media (max-width: 767px) {
+  /* iOS 输入框字号 < 16px 会触发聚焦自动放大，移动端统一提到 16px；
+     select 用原生下拉不会触发缩放，不放进来，让下拉框保持与页面一致的 text-sm */
+  input, textarea {
     font-size: 16px !important;
   }
+  /* 笔记标题输入框：不受上面「input/textarea 强制 16px 防聚焦缩放」影响，
+     标题是页面最大层级，单独用大字号（同 text-3xl），避免比正文副标题还小。 */
+  .note-title-input {
+    font-size: 1.875rem !important;
+  }
+}
+
+/* 统一下拉「选项」文字大小：不同 select 的 text-sm / 系统默认混在一起会显得忽大忽小，全部收敛到 14px */
+select option {
+  font-size: 0.875rem;
+  line-height: normal;
 }
 
 /* ===== 页面标题栏（移动端吸顶、背景与页面一致）：桌面端回到普通块 =====
@@ -97,7 +132,7 @@ body {
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   background: var(--page-bg);
   background-attachment: fixed;
-  padding: calc(env(safe-area-inset-top) + 0.75rem) 1rem 0.75rem;
+  padding: calc(env(safe-area-inset-top) + 1rem) 1rem 0.75rem;
 }
 @media (min-width: 768px) {
   .page-header {
@@ -117,20 +152,25 @@ body {
 }
 
 .btn-brand {
-  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium text-white transition-all;
-  background-image: linear-gradient(135deg, var(--brand), oklch(0.6 0.12 200));
-  box-shadow: 0 6px 18px oklch(0.62 0.10 165 / 0.25);
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium text-white transition-all;
+  background-image: linear-gradient(135deg, var(--brand), oklch(0.58 0.11 var(--brand-hue)));
+  box-shadow: 0 6px 18px oklch(0.62 0.10 var(--brand-hue) / 0.25);
 }
 .btn-brand:hover { filter: brightness(1.05); }
 .btn-brand:active { transform: translateY(1px); }
 
 @utility brand-gradient {
-  background-image: linear-gradient(135deg, var(--brand), oklch(0.6 0.12 200));
+  background-image: linear-gradient(135deg, var(--brand), oklch(0.58 0.11 var(--brand-hue)));
 }
 
 /* 隐藏滚动条但保留滚动 */
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* 图标按钮基准（iOS 舒适可点区：h-9=36px，图标 h-5）。品牌色/描边/前景色由调用处覆盖。 */
+.icon-btn {
+  @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-700;
+}
 
 /* ===== TipTap 富文本编辑器内容区 ===== */
 .tiptap {
@@ -146,16 +186,23 @@ body {
   font-size: 1.6em;
   font-weight: 700;
   margin: 0.6em 0 0.3em;
+  letter-spacing: -0.02em;
 }
 .tiptap h2 {
   font-size: 1.35em;
   font-weight: 700;
   margin: 0.6em 0 0.3em;
+  letter-spacing: -0.02em;
 }
 .tiptap h3 {
   font-size: 1.15em;
   font-weight: 600;
   margin: 0.5em 0 0.25em;
+  letter-spacing: -0.01em;
+}
+/* 笔记标题输入框：与 h1 同级的大字号，同样轻微负字距，避免显得「胖土」 */
+.note-title-input {
+  letter-spacing: -0.02em;
 }
 .tiptap ul {
   list-style: disc;
@@ -189,13 +236,13 @@ body {
 }
 /* 链接：粘贴 URL 回车后自动转成可点击链接 */
 .tiptap-link {
-  color: #0d9488; /* teal-600 */
+  color: oklch(0.60 0.09 var(--brand-hue));
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
 }
 .tiptap-link:hover {
-  color: #0f766e; /* teal-700 */
+  color: oklch(0.52 0.08 var(--brand-hue));
 }
 /* 精读「原文」块里的中文翻译：淡灰小字，跟在每段原文下方 */
 .tiptap .translation {
@@ -253,12 +300,20 @@ ruby.furigana rt {
 .tiptap .tableWrapper,
 .tiptap .table-scroll {
   max-width: 100%;
+  overflow-x: auto; /* 表格列宽之和超过容器时横向滚动，移动端不再被裁得只剩两列 */
+  -webkit-overflow-scrolling: touch;
 }
 .tiptap table {
   border-collapse: collapse;
   table-layout: fixed; /* 固定列宽：粘贴进来的长文本自动换行，不会把表格撑宽 */
   width: 100%; /* 表格铺满正文宽度；拖某列时其余列自动均分剩余宽度，不出滑动 */
   margin: 0.5em 0;
+}
+/* 移动端：表格列宽自适应铺满一屏——忽略拖拽/粘贴带来的固定列宽（colwidth），所有列均分、全部展示，不横向滚动。 */
+@media (max-width: 767px) {
+  .tiptap table col {
+    width: auto !important;
+  }
 }
 .tiptap th,
 .tiptap td {
@@ -277,7 +332,7 @@ ruby.furigana rt {
   content: "";
   position: absolute;
   inset: 0;
-  background: oklch(0.62 0.10 165 / 0.15);
+  background: oklch(0.62 0.10 var(--brand-hue) / 0.15);
   pointer-events: none;
 }
 
@@ -312,28 +367,33 @@ ruby.furigana rt {
   min-width: 0;
 }
 
-/* ===== callout（生词 = 奶油金 / 例句 = 鼠尾草绿 / 语法 = 薰衣草紫 / 原文 = 灰，奶油粉彩低饱和配色） ===== */
+/* ===== callout（生词 = 米色 / 例句 = 鼠尾草绿 / 语法 = 薰衣草紫 / 原文 = 灰，浅米低饱和耐看配色） ===== */
 .tiptap .callout {
   border-radius: 12px;
   padding: 0.45rem 0.75rem;
   margin: 0.75em 0;
 }
 .tiptap .callout[data-kind="word"] {
-  background: #fef8e4;
-  border: 1px solid #f2dfae;
+  background: #f6f0e4;
+  border: 1px solid #e6d9c0;
 }
 .tiptap .callout[data-kind="example"] {
-  background: #f0f6ec;
-  border: 1px solid #d8e7d2;
+  background: #eef4eb;
+  border: 1px solid #d9e4d1;
 }
 .tiptap .callout[data-kind="grammar"] {
-  background: #dfdefe;
-  border: 1px solid #ccc8f2;
+  background: #edeaf6;
+  border: 1px solid #dcd7ec;
 }
 /* 原文：极淡浅灰底 + 细浅灰边，和纯白页面拉开一点点区别（不重，只做区分） */
 .tiptap .callout[data-kind="article"] {
   background: #fafafa;
   border: 1px solid #eeeeee;
+}
+/* 备注（纯无标题）：更浅的灰底 + 虚线边，和「文章」的实线区分，只做轻微分隔、不抢正文 */
+.tiptap .callout[data-kind="note"] {
+  background: #fafafa;
+  border: 1px dashed #e0e0e0;
 }
 .tiptap .callout-label {
   font-size: 0.85em;
@@ -342,15 +402,15 @@ ruby.furigana rt {
   color: #374151;
   user-select: none;
 }
-/* 标签按类型着色（对齐 KIND_META：生词金 / 例句绿 / 语法紫 / 原文灰） */
+/* 标签按类型着色（对齐 KIND_META：生词米棕 / 例句绿 / 语法紫 / 原文灰） */
 .tiptap .callout[data-kind="word"] > .callout-label {
-  color: #9a7328;
+  color: #8a6b3a;
 }
 .tiptap .callout[data-kind="example"] > .callout-label {
-  color: #2b795c;
+  color: #4a7a5d;
 }
 .tiptap .callout[data-kind="grammar"] > .callout-label {
-  color: #5a4ac0;
+  color: #6a5fc0;
 }
 .tiptap .callout[data-kind="article"] > .callout-label {
   color: #a1a1aa;
@@ -477,7 +537,7 @@ ruby.furigana rt {
   table-layout: fixed; /* 固定列宽，多列表格在窄图里不会被撑爆 */
   width: 100%;
   max-width: 100%;
-  margin: 0.5em auto; /* 水平居中 */
+  margin: 0; /* 上下不用额外留白（flex gap 已隔开），也避免按行切页时每个单行表格各算一份 margin 把测高撑大 */
   overflow-wrap: anywhere;
 }
 .share-content col {
@@ -535,25 +595,25 @@ ruby.furigana rt {
   opacity: 1;
 }
 .share-content .callout[data-kind="word"] {
-  background: #fef8e4;
-  border: 1px solid #f2dfae;
+  background: #f6f0e4;
+  border: 1px solid #e6d9c0;
 }
 .share-content .callout[data-kind="word"] .callout-label {
-  color: #9a7328;
+  color: #8a6b3a;
 }
 .share-content .callout[data-kind="example"] {
-  background: #f0f6ec;
-  border: 1px solid #d8e7d2;
+  background: #eef4eb;
+  border: 1px solid #d9e4d1;
 }
 .share-content .callout[data-kind="example"] .callout-label {
-  color: #2b795c;
+  color: #4a7a5d;
 }
 .share-content .callout[data-kind="grammar"] {
-  background: #dfdefe;
-  border: 1px solid #ccc8f2;
+  background: #edeaf6;
+  border: 1px solid #dcd7ec;
 }
 .share-content .callout[data-kind="grammar"] .callout-label {
-  color: #5a4ac0;
+  color: #6a5fc0;
 }
 .share-content .callout[data-kind="article"] {
   border: none;
@@ -562,6 +622,13 @@ ruby.furigana rt {
 }
 .share-content .callout[data-kind="article"] .callout-label {
   color: #9ca3af;
+}
+/* 备注（纯无标题）：跟编辑器一致（浅灰底 + 虚线边），无标签 */
+.share-content .callout[data-kind="note"] {
+  background: #fafafa;
+  border: 1px dashed #d4d4d8;
+  color: #27272a;
+  opacity: 1;
 }
 
 /* 按条切页（分享图）：每条更紧凑，行距收紧、不要分太开 */

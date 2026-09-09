@@ -27,15 +27,20 @@ export function scheduleReview(
   let { ease, intervalDays, reps, lapses } = prev;
 
   if (rating === 1) {
-    // 忘记：重新开始，当天再看
+    // 忘记：重新开始，次日再看（不再当天即到期，避免被复习会话立刻再捞起死循环）
     reps = 0;
     lapses += 1;
-    intervalDays = 0;
+    intervalDays = 1;
     ease = Math.max(MIN_EASE, ease - 0.2);
   } else if (rating === 2) {
-    // 困难：间隔缓增，难度略降
+    // 困难：间隔缓增，难度略降；基数 ≤1 时乘 1.2 会原地踏步（round(1*1.2)=1），改按连续答对次数递增
     reps += 1;
-    intervalDays = reps <= 1 ? 1 : Math.max(1, Math.round(intervalDays * 1.2));
+    intervalDays =
+      reps <= 1
+        ? 1
+        : intervalDays <= 1
+          ? reps
+          : Math.max(1, Math.round(intervalDays * 1.2));
     ease = Math.max(MIN_EASE, ease - 0.15);
   } else if (rating === 3) {
     // 一般：标准 SM-2

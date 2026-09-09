@@ -7,6 +7,7 @@ import { useState } from "react";
 import { FileJson, FileSpreadsheet } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { downloadText, exportCardsCsv } from "@/lib/export-data";
+import { SettingsGroup } from "./settings-row";
 import type { Card } from "@/lib/types";
 
 export function DataBackup() {
@@ -61,26 +62,46 @@ export function DataBackup() {
   }
 
   return (
-    <div>
-      <div className="flex flex-wrap gap-2">
+    <div className="space-y-3">
+      <SettingsGroup title="数据">
         <button
           onClick={exportAll}
           disabled={busy !== null}
-          className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-60"
+          className="flex w-full items-center justify-between gap-3 px-4 py-3.5 transition-colors hover:bg-zinc-50 disabled:opacity-60"
         >
-          <FileJson className="h-4 w-4" />
-          {busy === "json" ? "导出中…" : "导出全部数据 (JSON)"}
+          <div className="min-w-0 text-left">
+            <p className="text-sm text-zinc-800">导出全部数据</p>
+            <p className="mt-0.5 text-xs text-zinc-400">JSON，含笔记 / 闪卡 / 进度 / 设置 / 文件夹 / 词群</p>
+          </div>
+          <span className="shrink-0 text-zinc-400">
+            {busy === "json" ? (
+              <span className="text-xs">导出中…</span>
+            ) : (
+              <FileJson className="h-4 w-4" />
+            )}
+          </span>
         </button>
+
         <button
           onClick={exportCsv}
           disabled={busy !== null}
-          className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-60"
+          className="flex w-full items-center justify-between gap-3 px-4 py-3.5 transition-colors hover:bg-zinc-50 disabled:opacity-60"
         >
-          <FileSpreadsheet className="h-4 w-4" />
-          {busy === "csv" ? "导出中…" : "导出闪卡 (CSV)"}
+          <div className="min-w-0 text-left">
+            <p className="text-sm text-zinc-800">导出闪卡</p>
+            <p className="mt-0.5 text-xs text-zinc-400">CSV，可用 Anki / Excel 打开</p>
+          </div>
+          <span className="shrink-0 text-zinc-400">
+            {busy === "csv" ? (
+              <span className="text-xs">导出中…</span>
+            ) : (
+              <FileSpreadsheet className="h-4 w-4" />
+            )}
+          </span>
         </button>
-      </div>
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      </SettingsGroup>
+
+      {error && <p className="px-1 text-sm text-red-600">{error}</p>}
     </div>
   );
 }

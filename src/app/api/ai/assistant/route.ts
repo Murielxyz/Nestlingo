@@ -19,17 +19,22 @@ const SYSTEM_PROMPT = `你是语巢（Nestlingo）里的 AI 学习助手，帮�
 {
   "reply": "对用户的回答（简体中文）",
   "points": [
-    {"kind": "word", "front": "要记的单词/短语（原语言）", "back": "简体中文释义", "extra": "常见搭配/例句/相关词，没有就空字符串"},
+    {"kind": "word", "front": "要记的单词/短语（原语言）", "back": "简体中文释义（词典风格，可含词性，如 [名词]）；多个义项用顿号「、」隔开写在同一行，不要用换行分隔", "reading": "读音（泰语罗马音带声调 / 韩语罗马转写 / 英语音标；日语、中文不填，没有就空字符串）", "extra": "一个用原语言写的完整例句，格式为「例句（简体中文翻译）」——括号里必须是这句的中文翻译，严禁把原句再抄一遍，没有就空字符串", "note": "搭配：常用搭配、词组，合并写在一起，没有就空字符串"},
     {"kind": "example", "front": "值得精读的句子（原语言）", "back": "简体中文翻译", "extra": "语法/用法说明，没有就空字符串"},
-    {"kind": "grammar", "front": "语法点（原语言 + 简短中文名）", "back": "语法说明（简体中文）", "conjugations": [{"rule": "接续规则（如「動詞て形」「名詞＋の」）", "example": "这条接续规则的一个例句（原语言）"}], "extra": "一个例句，没有就空字符串"},
+    {"kind": "grammar", "front": "该语法点最典型的一条原语言例子（如泰语礼貌词写「ครับ / ค่ะ」、日语て形写「食べて」），必须用目标语言写、不要写成中文语法名", "back": "语法说明（简体中文）", "conjugations": [{"rule": "接续规则（如「動詞て形」「名詞＋の」）", "example": "这条接续规则的一个例句（原语言）"}], "extra": "一个例句，没有就空字符串"},
     {"kind": "article", "front": "短文/原文正文（原语言，多段用换行分隔）", "back": "逐段中文翻译（段数与 front 一致、用换行分隔，没有就空字符串）", "extra": ""}
   ]
 }
 
 规则：
 - 用户查一个或几个词 → points 给对应数量的 word；问语法 → grammar；要例句 → example。
+- 生词（word）的 extra 里若写例句，必须是完整、自然的原语言句子，后面用全角括号「（）」附这句的简体中文翻译（格式「例句（译文）」），括号里严禁重复原句或留空；不要写成用法说明或解释（如不要写「用于打招呼」「表示礼貌」这类）；常用搭配、词组统一写进 note（搭配），不要单独分「搭配」「相关」等标签；只有需要特别解释的用法说明才写进 note，没有就留空。
+- 生词（word）的 back 释义里若有多个义项，用顿号「、」隔开写在同一行，严禁用换行分隔（换行会被当成另一块内容，导致背面多出一行孤立的词）。
+- 生词（word）的 reading（读音）按目标语言给：泰语=罗马音并带声调符号（如 ก๋วยเตี๋ยว → gŭuay-dtĭieow）、韩语=罗马转写、英语=音标；日语不填（正面词本身已带假名）、中文不填（无需音标）；不必每个词都填读音，没有可靠读音就留空字符串；只有生词才填 reading，其余类型一律留空字符串。
+- 每个字段没有内容就留空字符串，不要为了凑字段硬写。
 - 用户让你写短文/文章 → 正文放进一个 article（front=原文、back=逐段译文），再把里面的生词、例句、语法拆成对应的 word/example/grammar 点。
 - 日语语法点（grammar）必须给 conjugations（接续规则）：按词性分别列出接续规则、每条配一个例句——rule 简洁写接什么（动词哪个形：辞書形 / て形 / た形 / ない形 / ます形去掉ます / 普通形 等；名词/形容词接法：名詞＋の / い形容詞＋い / な形容詞＋な 等），用原语言形式写；example 是该接续规则的一个例句（原语言）。没有不同接续就只给一条；非日语语法点留空数组 []。
+- 语法点（grammar）的 front 必须是「用目标语言写的典型表达或例子」，不要写中文语法名；中文语法说明放 back、例句放 extra。像「泰语礼貌词」这类，front 直接写ครับ / ค่ะ 等原语言形式，让生成的闪卡正面带得到泰语、不纯是中文解释。
 - 没有值得收藏的内容时 points 可以是空数组 []。
 - 所有释义、翻译、说明都用简体中文。
 - kind 只能取 word / example / grammar / article 四个值之一。`;
@@ -51,6 +56,21 @@ function langHint(lang: string): string {
   return `\n\n用户当前的目标语言是${label}。若用户发来一段要翻译的中文，直接翻译成地道、自然的${label}（不要逐字直译，要像母语者那样说），并把译文作为一条 kind="example" 的知识点放进 points（front=译文、back=中文原文）；若用户发来「场景对话 / 写美文 / 查词 / 问语法」等指令，按指令用${label}执行。`;
 }
 
+/** 语伴多轮会话历史：取最近若干轮（用户+助手），拼成 text 追加进 system，让「全能助手」能接上文。
+ *  角色转中文：user=用户、assistant=AI。内容截到 400 字/条，防历史撑爆上下文。 */
+function historyHint(history: { role: string; content: string }[]): string {
+  const lines = history
+    .slice(-12)
+    .map((h) => {
+      const role = h.role === "user" ? "用户" : "AI";
+      const body = (h.content ?? "").slice(0, 400);
+      return body ? `${role}：${body}` : "";
+    })
+    .filter(Boolean);
+  if (lines.length === 0) return "";
+  return `\n\n以下是之前的对话记录（供你接上下文，不必复述）：\n${lines.join("\n")}`;
+}
+
 /** 当前笔记里已有的知识点（生词/例句/语法）上下文：用户要「补全」时，针对这些内容输出对应类型的点（front 原文不变、back 丰富释义、extra 例句）。 */
 function notePointsHint(points: { kind: string; front: string; back: string }[]): string {
   if (points.length === 0) return "";
@@ -58,7 +78,7 @@ function notePointsHint(points: { kind: string; front: string; back: string }[])
   const lines = points
     .map((p) => `[${KIND_LABEL[p.kind] ?? "生词"}] ${p.front}${p.back ? `：${p.back}` : ""}`)
     .join("\n");
-  return `\n\n用户当前笔记里已有的知识点如下（「[类型] 词：现有释义」，释义可能很薄或为空）：\n${lines}\n\n当用户要求「补全 / 丰富 / 完善这些生词、例句、语法的释义，或给它们加例句」时，请针对这些内容输出对应类型的点，规则如下：\n- 生词：kind="word"，front 保持原词一字不改，back 输出更完整、词典风格的中文释义，extra 输出一个用原语言写的例句（可附中文翻译）。\n- 例句：kind="example"，front 保持原句一字不改，back 只输出准确的中文翻译，extra 留空。\n- 语法：kind="grammar"，front 保持原语法点一字不改，back 输出更完整的语法说明（接续规则用 conjugations 列），extra 输出一个用原语言写的例句（可附中文翻译）。\n与笔记无关的其它提问请忽略这些知识点。`;
+  return `\n\n用户当前笔记里已有的知识点如下（「[类型] 词：现有释义」，释义可能很薄或为空）：\n${lines}\n\n当用户要求「补全 / 丰富 / 完善这些生词、例句、语法的释义，或给它们加例句」时，请针对这些内容输出对应类型的点，规则如下：\n- 生词：kind="word"，front 保持原词一字不改，back 输出更完整、词典风格的中文释义，extra 输出一个用原语言写的例句（格式「例句（简体中文翻译）」，括号里严禁重复原句），note 输出搭配（常用搭配、词组等，可空）。\n- 例句：kind="example"，front 保持原句一字不改，back 只输出准确的中文翻译，extra 留空。\n- 语法：kind="grammar"，front 保持原语法点一字不改，back 输出更完整的语法说明（接续规则用 conjugations 列），extra 输出一个用原语言写的例句（可附中文翻译）。\n与笔记无关的其它提问请忽略这些知识点。`;
 }
 
 function parseReply(raw: string): { reply: string; points: AssistantPoint[] } {
@@ -82,7 +102,9 @@ function parseReply(raw: string): { reply: string; points: AssistantPoint[] } {
         kind,
         front: String(o.front ?? "").trim(),
         back: String(o.back ?? "").trim(),
+        reading: String(o.reading ?? "").trim(),
         extra: String(o.extra ?? "").trim(),
+        note: String(o.note ?? "").trim(),
         conjugations: (Array.isArray(o.conjugations) ? o.conjugations : [])
           .map((c) => {
             const cc = (c ?? {}) as Record<string, unknown>;
@@ -112,7 +134,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "未登录" }, { status: 401 });
   }
 
-  let body: { message?: string; lang?: string; notePoints?: unknown };
+  let body: { message?: string; lang?: string; notePoints?: unknown; history?: { role: string; content: string }[] };
   try {
     body = await req.json();
   } catch {
@@ -139,8 +161,15 @@ export async function POST(req: Request) {
         })
         .filter((w) => w.front)
     : [];
+  const history: { role: string; content: string }[] = Array.isArray(body.history)
+    ? body.history
+        .filter((h) => h && (h.role === "user" || h.role === "assistant"))
+        .map((h) => ({ role: h.role, content: String(h.content ?? "") }))
+    : [];
   const system =
-    (lang ? SYSTEM_PROMPT + langHint(lang) : SYSTEM_PROMPT) + notePointsHint(notePoints);
+    (lang ? SYSTEM_PROMPT + langHint(lang) : SYSTEM_PROMPT) +
+    notePointsHint(notePoints) +
+    historyHint(history);
 
   try {
     const raw = await aiChat({ system, user: message, maxTokens: 4000 });

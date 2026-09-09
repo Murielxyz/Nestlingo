@@ -5,29 +5,15 @@ import { useRouter } from "next/navigation";
 import { FileUp, CircleCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { parseCards, type ParsedCard } from "@/lib/parse-cards";
-import { detectCardLang } from "@/lib/lang-detect";
+import { detectCardLang, LANG_ORDER, LANG_LABEL, type Lang } from "@/lib/lang-detect";
 import type { RecognitionRules } from "@/lib/types";
 
 /**
- * 「添加闪卡」：粘贴任意文本（Excel 表格 / Word / 别的笔记），
+ * 「添加闪卡」:粘贴任意文本（Excel 表格 / Word / 别的笔记），
  * 解析成卡片，确认后作为「独立卡片」入库（不挂在某篇笔记下）。
+ * `AddCardsModal` 由卡片页头部 ⋯ 菜单「添加闪卡」调用。
  */
-export function AddCardsButton() {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <button
-        onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
-      >
-        ＋ 添加闪卡
-      </button>
-      {open && <AddCardsModal onClose={() => setOpen(false)} />}
-    </>
-  );
-}
-
-function AddCardsModal({ onClose }: { onClose: () => void }) {
+export function AddCardsModal({ onClose }: { onClose: () => void }) {
   const router = useRouter();
   const [source, setSource] = useState("");
   const [title, setTitle] = useState("");
@@ -38,6 +24,8 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
   const [rules, setRules] = useState<RecognitionRules | null>(null);
   const [fileBusy, setFileBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 批量指定语言：自动识别偶尔失败（如特殊地名/人名），选一个兜底整批。
+  const [forceLang, setForceLang] = useState<Lang | "auto">("auto");
 
   // 拉取自定义识别规则，识别时按它归类表头。
   useEffect(() => {
@@ -123,7 +111,10 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
         front: c.front.trim(),
         back: c.back.trim(),
         kind: c.kind ?? null,
-        lang: detectCardLang({ front: c.front.trim(), back: c.back.trim() }),
+        lang:
+          forceLang !== "auto"
+            ? forceLang
+            : detectCardLang({ front: c.front.trim(), back: c.back.trim() }),
         position: i,
       }));
     if (rows.length === 0) {
@@ -162,14 +153,14 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
       <div className="flex max-h-[88vh] w-full flex-col rounded-t-3xl bg-white shadow-xl sm:max-w-lg sm:rounded-2xl">
         <header className="flex items-start justify-between border-b border-zinc-100 px-4 py-3">
           <div>
-            <h2 className="text-base font-semibold text-zinc-900">添加闪卡</h2>
+            <h2 className="text-base font-semibold text-zinc-900">添加闪卡合集</h2>
             <p className="mt-0.5 text-xs text-zinc-500">
-              粘贴内容自动识别成卡片，存成一个闪卡文件。
+              粘贴内容自动识别成卡片，存成一个闪卡合集。
             </p>
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg px-2 py-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            className="rounded-lg px-2 py-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
             aria-label="关闭"
           >
             ✕
@@ -184,7 +175,7 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
             </p>
             <button
               onClick={onClose}
-              className="mt-6 rounded-lg bg-teal-600 px-5 py-2 text-sm font-semibold text-white hover:bg-teal-700"
+              className="mt-6 rounded-lg bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700"
             >
               完成
             </button>
@@ -196,14 +187,30 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="文件标题（例如：泰语生词 · 第 1 课）"
-                className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-800 focus:border-teal-500 focus:outline-none"
+                className="w-full rounded-lg border border-zinc-200 px-3 py-2.5 text-sm font-medium text-zinc-800 focus:border-teal-500 focus:outline-none placeholder:text-sm"
               />
+              {/* 批量语言：默认自动，识别失败可强制整批一种 */}
+              <div className="flex items-center gap-2">
+                <label className="shrink-0 text-xs text-zinc-400">语言</label>
+                <select
+                  value={forceLang}
+                  onChange={(e) => setForceLang(e.target.value as Lang | "auto")}
+                  className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600 focus:border-teal-500 focus:outline-none"
+                >
+                  <option value="auto">自动识别（推荐）</option>
+                  {LANG_ORDER.map((l) => (
+                    <option key={l} value={l}>
+                      {LANG_LABEL[l]}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <textarea
                 value={source}
                 onChange={(e) => setSource(e.target.value)}
                 rows={4}
                 placeholder="粘贴内容，例如：&#10;词汇	读音	释义&#10;สวัสดี	sà-wàt-dii	你好"
-                className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 focus:border-teal-500 focus:outline-none"
+                className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs text-zinc-700 focus:border-teal-500 focus:outline-none"
               />
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-zinc-400">支持导入 Excel / CSV / Word</span>
@@ -211,7 +218,7 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={fileBusy}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-60"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-60"
                 >
                   <FileUp className="h-3.5 w-3.5" />
                   {fileBusy ? "读取中…" : "导入文件"}
@@ -226,7 +233,7 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
               </div>
               <button
                 onClick={parse}
-                className="w-full rounded-lg border border-teal-200 px-4 py-2 text-sm font-medium text-teal-600 hover:bg-teal-50"
+                className="w-full rounded-lg border border-teal-200 px-4 py-2.5 text-sm font-medium text-teal-600 hover:bg-teal-50"
               >
                 识别成卡片
               </button>
@@ -244,14 +251,14 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
                       value={c.front}
                       onChange={(e) => update(i, "front", e.target.value)}
                       placeholder="正面"
-                      className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-900 focus:border-teal-500 focus:outline-none"
+                      className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm font-medium text-zinc-900 focus:border-teal-500 focus:outline-none placeholder:text-sm"
                     />
                     <textarea
                       value={c.back}
                       onChange={(e) => update(i, "back", e.target.value)}
                       placeholder="背面（可换行加例句）"
                       rows={2}
-                      className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-600 focus:border-teal-500 focus:outline-none"
+                      className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-600 focus:border-teal-500 focus:outline-none placeholder:text-sm"
                     />
                     <button
                       onClick={() => remove(i)}
@@ -267,14 +274,14 @@ function AddCardsModal({ onClose }: { onClose: () => void }) {
             <footer className="flex gap-2 border-t border-zinc-100 px-4 py-3">
               <button
                 onClick={onClose}
-                className="flex-1 rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-50"
+                className="flex-1 rounded-lg border border-zinc-200 px-4 py-2.5 text-sm text-zinc-600 hover:bg-zinc-50"
               >
                 取消
               </button>
               <button
                 onClick={save}
                 disabled={saving || cards.length === 0}
-                className="flex-1 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+                className="flex-1 rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
               >
                 {saving ? "入库中…" : `确认入库 ${cards.length} 张`}
               </button>

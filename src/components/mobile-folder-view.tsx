@@ -1,15 +1,17 @@
 "use client";
 
 import { useMemo } from "react";
-import Link from "next/link";
-import { Folder } from "lucide-react";
-import { NoteList } from "./notes-browser";
-import { folderTree } from "@/lib/folders";
+import { NoteList, ViewToggleButton } from "./notes-browser";
+import { NewNoteButton } from "./new-note-button";
+import { BackButton } from "./back-button";
+import { descendantFolderIds } from "@/lib/folders";
+import { useNotesView } from "@/lib/notes-view";
 import type { Folder as FolderType, Note } from "@/lib/types";
 
 /**
- * 手机端文件夹详情页：显示一个文件夹里的子文件夹 + 笔记列表。
- * 从笔记主页点文件夹进入这里；点子文件夹继续下钻，点某篇笔记进入正文。
+ * 手机端文件夹详情页（次级页）：只展示这个文件夹子树下「所有」笔记（含次级文件夹里的笔记），
+ * 像苹果备忘录那样，子文件夹留在文件夹列表里用 toggle 箭头管理层级，不在这里单独分一栏。
+ * 导航条 = 返回 ‹ + 标题 + 居中「· N 篇笔记」+ 右侧视图切换 + 新建，单行窄吸顶，左右协调。
  */
 export function MobileFolderView({
   folder,
@@ -20,60 +22,71 @@ export function MobileFolderView({
   notes: Note[];
   folders: FolderType[];
 }) {
-  const subfolders = useMemo(
-    () => folderTree(folders).children.get(folder.id) ?? [],
-    [folders, folder.id]
+  // 「全部笔记」专用 scope：收纳整个库（含未归档的），不做任何过滤。
+  const isAll = folder.id === "all";
+  // 本文件夹 + 全部后代文件夹的 id 集合，用于挑出「属于这个子树」的所有笔记；「unfiled」为 null 表示「只看无文件夹的」。
+  const subtreeIds = useMemo(
+    () => (folder.id === "unfiled" ? null : descendantFolderIds(folders, folder.id)),
+    [folder.id, folders]
   );
 
-  return (
-    <div className="px-4 py-6">
-      <header className="sticky top-0 z-20 -mx-4 -mt-6 mb-4 border-b border-zinc-100 bg-white px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
-        <Link
-          href={folder.parent_id ? `/notes/folder/${folder.parent_id}` : "/notes"}
-          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 -ml-2 text-sm text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
-        >
-          ← {folder.parent_id ? "上一级" : "返回笔记"}
-        </Link>
+  // 列表 / 网格视图（受控，切换按钮由本页头部承担，NoteList 不再自渲染）；跨页面记住选择。
+  const [view, changeView] = useNotesView();
 
-        <h1 className="mt-2 flex items-center gap-2 text-2xl font-bold text-zinc-900">
-          <Folder className="h-6 w-6 text-zinc-400" />
-          {folder.name}
-        </h1>
-        <p className="mt-1 text-sm text-zinc-400">
-          {notes.length} 篇笔记
-          {subfolders.length > 0 ? ` · ${subfolders.length} 个子文件夹` : ""}
-        </p>
+  const folderNotes = useMemo(() => {
+    if (isAll) return notes;
+    if (!subtreeIds) return notes.filter((n) => !n.folder_id);
+    return notes.filter((n) => n.folder_id && subtreeIds.has(n.folder_id));
+  }, [notes, subtreeIds, isAll]);
+
+  const backHref = folder.parent_id ? `/notes/folder/${folder.parent_id}` : "/notes";
+  const newFolderId = folder.id === "unfiled" || folder.id === "all" ? null : folder.id;
+
+  return (
+    <div
+      className="flex flex-col"
+      style={{ height: "calc(100dvh - 5rem - env(safe-area-inset-bottom))" }}
+    >
+      {/* 次级页导航条：返回 ‹ + 标题 + 居中「· N 篇笔记」+ 右侧视图切换 + 新建，单行窄吸顶。 */}
+      <header className="shrink-0 border-b border-black/5 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)]">
+        <div className="relative flex items-center gap-2">
+          <BackButton
+            fallback={backHref}
+            className="icon-btn text-xl"
+          />
+          {/* 标题（无图标，省空间）；pr-12 留出右侧控件空隙，避免长标题顶到居中的篇数。 */}
+          <h1 className="min-w-0 flex-1 truncate pr-12 text-lg font-bold text-zinc-900">
+            {folder.name}
+          </h1>
+          {/* 篇数：绝对水平居中，像苹果备忘录那样放在标题行正中。 */}
+          <span className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-xs text-zinc-400">
+            {folderNotes.length} 篇笔记
+          </span>
+          <ViewToggleButton
+            view={view}
+            onChange={changeView}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition-colors hover:bg-zinc-50"
+          />
+          <NewNoteButton folderId={newFolderId} />
+        </div>
       </header>
 
-      {subfolders.length > 0 && (
-        <div className="mb-5">
-          <p className="mb-2 text-xs font-medium text-zinc-400">子文件夹</p>
-          <ul className="space-y-1.5">
-            {subfolders.map((sub) => (
-              <li key={sub.id}>
-                <Link
-                  href={`/notes/folder/${sub.id}`}
-                  className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 transition-colors hover:border-teal-300"
-                >
-                  <Folder className="h-4 w-4 shrink-0 text-zinc-400" />
-                  <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-800">
-                    {sub.name}
-                  </span>
-                  <span className="text-xs text-zinc-400">→</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {notes.length === 0 && subfolders.length === 0 ? (
-        <p className="py-8 text-center text-sm text-zinc-400">
-          这个文件夹还是空的，去建一篇笔记或子文件夹收录进来吧。
-        </p>
-      ) : notes.length > 0 ? (
-        <NoteList notes={notes} query="" folders={folders} />
-      ) : null}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        {folderNotes.length === 0 ? (
+          <p className="py-8 text-center text-sm text-zinc-400">
+            这个文件夹还是空的，去建一篇笔记收录进来吧。
+          </p>
+        ) : (
+          <NoteList
+            notes={folderNotes}
+            query=""
+            folders={folders}
+            showCount={false}
+            view={view}
+            onViewChange={changeView}
+          />
+        )}
+      </div>
     </div>
   );
 }

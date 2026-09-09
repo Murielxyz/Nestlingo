@@ -105,7 +105,7 @@ export function MediaEmbedNodeView(props: NodeViewProps) {
         allow="encrypted-media"
       />
     ) : (
-      <PodcastAudioPlayer src={attrs.src} title={title} cover={attrs.cover} openHref={attrs.original} />
+      <PodcastAudioPlayer src={attrs.src} title={title} cover={attrs.cover} />
     );
 
   // 打开悬浮播放：首次给一个右下角的初始位置，之后记住用户拖到的位置。

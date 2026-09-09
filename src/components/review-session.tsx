@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { PartyPopper } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { PartyPopper, List, Shuffle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { scheduleReview, dueAtFrom, DEFAULT_SCHEDULE, type Rating } from "@/lib/srs";
 import type { ReviewItem } from "@/lib/supabase/queries";
@@ -9,6 +10,7 @@ import { cardLang, LANG_LABEL, LANG_ORDER, type Lang } from "@/lib/lang-detect";
 import { CardBack } from "./card-back";
 import { CardFront } from "./card-front";
 import { SpeakButton } from "./speak-button";
+import { TestSession } from "./test-session";
 
 // 淡色系评分按钮：浅底 + 深色文字，不再用饱和的实心色块
 const RATINGS: { value: Rating; label: string; cls: string }[] = [
@@ -24,6 +26,16 @@ function intervalText(days: number): string {
   return `${days} 天后`;
 }
 
+/** Fisher-Yates 洗牌（不修改原数组）。 */
+function shuffleArray<T>(arr: T[]): T[] {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 /**
  * 背诵会话：一次一张，翻面后评分（忘记/困难/一般/简单）。
  * 评分结果按 SM-2 存进 review_state；「忘记」的卡会排到队尾再背一遍。
@@ -33,20 +45,31 @@ export function ReviewSession({
   items,
   dailyGoal = 20,
   canRememberCollection = true,
+  shuffleDefault = false,
 }: {
   items: ReviewItem[];
   dailyGoal?: number;
   /** 主题背诵不属于「复习主页合集」语义，不要改写「正在背的合集」进度。 */
   canRememberCollection?: boolean;
+  /** 来自设置的「默认随机顺序背诵」：挂载即洗牌，可临时切回顺序。 */
+  shuffleDefault?: boolean;
 }) {
   // 按每日目标截断本轮队列；多出来的留到下次。
   const sessionItems = items.slice(0, dailyGoal);
-  const [queue, setQueue] = useState<ReviewItem[]>(sessionItems);
+  const [queue, setQueue] = useState<ReviewItem[]>(() =>
+    shuffleDefault ? shuffleArray(sessionItems) : sessionItems
+  );
+  // 随机顺序：关闭 = 按合集原顺序（position），开启 = 洗牌当前待学队列。
+  const [shuffled, setShuffled] = useState(shuffleDefault);
+  // 挂载时的原始顺序快照，切回「顺序」时把还没背的卡按它重排。
+  const orderedRef = useRef<ReviewItem[]>(sessionItems);
   const [flipped, setFlipped] = useState(false);
   const [reviewed, setReviewed] = useState(0);
   const [reviewedCards, setReviewedCards] = useState<ReviewItem[]>([]);
-  const [listOpen, setListOpen] = useState<"due" | "done" | null>(null);
+  const [listOpen, setListOpen] = useState<"due" | "done">("due");
+  const [bankOpen, setBankOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
 
   const current = queue[0];
 
@@ -76,12 +99,40 @@ export function ReviewSession({
       }
     : DEFAULT_SCHEDULE;
 
+  // 背完后直接「测试练习」：对刚背过的卡出选择题（选择测试）。
+  if (testing) {
+    return (
+      <div>
+        <button
+          onClick={() => setTesting(false)}
+          className="mb-4 inline-flex items-center gap-1 text-sm text-teal-600 transition-colors hover:text-teal-700"
+        >
+          ← 返回学习结果
+        </button>
+        <TestSession
+          cards={reviewedCards.map((r) => r.card)}
+          title="测试练习"
+          backHref="/review"
+        />
+      </div>
+    );
+  }
+
   if (!current) {
     return (
       <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-16 text-center">
-        <PartyPopper className="h-10 w-10 text-teal-500" />
-        <p className="mt-4 text-lg font-semibold text-zinc-900">本轮复习完成！</p>
-        <p className="mt-1 text-sm text-zinc-500">共复习 {reviewed} 张闪卡。</p>
+        <div className="flex justify-center">
+          <PartyPopper className="h-10 w-10 text-teal-500" />
+        </div>
+        <p className="mt-4 text-lg font-semibold text-zinc-900">本轮学习完成！</p>
+        <p className="mt-1 text-sm text-zinc-500">共学 {reviewed} 张闪卡。</p>
+        <button
+          onClick={() => setTesting(true)}
+          disabled={reviewedCards.length === 0}
+          className="mt-6 rounded-lg bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700 disabled:opacity-50"
+        >
+          测试练习
+        </button>
       </div>
     );
   }
@@ -168,18 +219,52 @@ export function ReviewSession({
     setReviewedCards((f) => f.filter((i) => i.card.id !== id));
   }
 
+  // 切换「随机顺序」：开启洗牌当前待学队列；关闭则把还没背的卡按原始顺序重排。
+  function toggleShuffle() {
+    setShuffled((v) => {
+      if (v) {
+        // 随机 → 顺序：当前 queue 里仍在的卡按原始顺序（orderedRef）重排。
+        setQueue((q) => {
+          const remaining = new Set(q.map((i) => i.card.id));
+          return orderedRef.current.filter((i) => remaining.has(i.card.id));
+        });
+      } else {
+        // 顺序 → 随机：洗牌当前 queue。
+        setQueue((q) => shuffleArray(q));
+      }
+      return !v;
+    });
+  }
+
   return (
     <div className="mx-auto max-w-xl">
-      {/* 进度 */}
+      {/* 进度 + 词库入口 */}
       <div className="mb-4 flex items-center justify-between text-sm text-zinc-500">
         <span>
-          已复习 {reviewed} 张 · 待复习 {queue.length} 张
+          已学 {reviewed} 张 · 待学 {queue.length} 张
         </span>
-        {items.length > dailyGoal && (
-          <span className="text-xs text-zinc-400">
-            今日目标 {dailyGoal} 张（共 {items.length} 张，其余下次）
-          </span>
-        )}
+        <span className="flex items-center gap-2">
+          <button
+            onClick={toggleShuffle}
+            aria-pressed={shuffled}
+            title={shuffled ? "恢复顺序背诵" : "随机顺序背诵"}
+            className={`inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors ${
+              shuffled
+                ? "bg-teal-50 text-teal-600 hover:bg-teal-100"
+                : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+            }`}
+          >
+            <Shuffle className="h-3.5 w-3.5" />
+            随机
+          </button>
+          <button
+            onClick={() => setBankOpen((v) => !v)}
+            className="inline-flex items-center gap-0.5 rounded-lg px-2 py-1.5 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800"
+          >
+            <List className="h-3.5 w-3.5" />
+            词库
+          </button>
+        </span>
       </div>
 
       {/* 卡片（右上角发音按钮，读当前这面） */}
@@ -198,7 +283,12 @@ export function ReviewSession({
             }`}
           >
             {flipped ? (
-              <CardBack back={current.card.back ?? ""} />
+              <CardBack
+                back={current.card.back ?? ""}
+                front={current.card.front}
+                reading={current.card.reading}
+                center
+              />
             ) : (
               <CardFront text={current.card.front} reading={current.card.reading} />
             )}
@@ -237,50 +327,87 @@ export function ReviewSession({
         )}
       </div>
 
-      {/* 待复习 / 已复习 列表 */}
-      <div className="mt-6">
-        <div className="flex gap-2 text-sm">
-          <button
-            onClick={() => setListOpen(listOpen === "due" ? null : "due")}
-            className={`rounded-full px-3 py-1 transition-colors ${
-              listOpen === "due"
-                ? "bg-teal-100 text-teal-700"
-                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
-            }`}
+      {/* 词库弹窗：隐藏菜单，背诵界面保持专注不被打扰 */}
+      {bankOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4"
+          onClick={() => setBankOpen(false)}
+        >
+          <div
+            className="flex h-[min(80vh,30rem)] w-full flex-col rounded-t-3xl bg-white shadow-xl sm:max-w-lg sm:rounded-2xl"
+            onClick={(e) => e.stopPropagation()}
           >
-            待复习 {queue.length}
-          </button>
-          <button
-            onClick={() => setListOpen(listOpen === "done" ? null : "done")}
-            className={`rounded-full px-3 py-1 transition-colors ${
-              listOpen === "done"
-                ? "bg-teal-100 text-teal-700"
-                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
-            }`}
-          >
-            已复习 {reviewedCards.length}
-          </button>
+            <header className="flex items-center justify-between border-b border-zinc-100 px-4 py-3">
+              <h2 className="text-base font-semibold text-zinc-900">词库</h2>
+              <button
+                onClick={() => setBankOpen(false)}
+                className="rounded-lg px-2 py-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                aria-label="关闭"
+              >
+                ✕
+              </button>
+            </header>
+            <div className="flex gap-2 px-4 pt-3 text-sm">
+              <button
+                onClick={() => setListOpen("due")}
+                className={`rounded-full px-3 py-2 transition-colors ${
+                  listOpen === "due"
+                    ? "bg-teal-100 text-teal-700"
+                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                }`}
+              >
+                待学 {queue.length}
+              </button>
+              <button
+                onClick={() => setListOpen("done")}
+                className={`rounded-full px-3 py-2 transition-colors ${
+                  listOpen === "done"
+                    ? "bg-teal-100 text-teal-700"
+                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                }`}
+              >
+                已学 {reviewedCards.length}
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-3">
+              {listOpen === "due" ? (
+                queue.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-zinc-400">
+                    待学的卡都在上面了，继续背吧。
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {queue.map((q, i) => (
+                      <li key={`${q.card.id}-${i}`}>
+                        <ReviewListCard item={q} onChanged={patchCard} onDeleted={removeCard} />
+                      </li>
+                    ))}
+                  </ul>
+                )
+              ) : reviewedCards.length === 0 ? (
+                <p className="py-6 text-center text-sm text-zinc-400">这一轮还没学过的卡。</p>
+              ) : (
+                <ul className="space-y-2">
+                  {reviewedCards.map((q, i) => (
+                    <li key={`${q.card.id}-${i}`}>
+                      <ReviewListCard item={q} onChanged={patchCard} onDeleted={removeCard} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <footer className="border-t border-zinc-100 px-4 py-3">
+              <Link
+                href={current.card.note_id ? `/notes/${current.card.note_id}/cards` : "/cards"}
+                onClick={() => setBankOpen(false)}
+                className="block text-center text-sm font-medium text-teal-600 hover:text-teal-700"
+              >
+                查看全部 → 闪卡页
+              </Link>
+            </footer>
+          </div>
         </div>
-
-        {listOpen === "due" && (
-          <ul className="mt-2 space-y-2">
-            {queue.map((q, i) => (
-              <li key={`${q.card.id}-${i}`}>
-                <ReviewListCard item={q} onChanged={patchCard} onDeleted={removeCard} />
-              </li>
-            ))}
-          </ul>
-        )}
-        {listOpen === "done" && (
-          <ul className="mt-2 space-y-2">
-            {reviewedCards.map((q, i) => (
-              <li key={`${q.card.id}-${i}`}>
-                <ReviewListCard item={q} onChanged={patchCard} onDeleted={removeCard} />
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      )}
     </div>
   );
 }
@@ -329,21 +456,21 @@ function ReviewListCard({
           onChange={(e) => setFront(e.target.value)}
           placeholder="正面"
           autoFocus
-          className="w-full rounded-lg border border-zinc-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
+          className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none placeholder:text-sm"
         />
         <textarea
           value={back}
           onChange={(e) => setBack(e.target.value)}
           placeholder="背面（可换行加例句）"
           rows={2}
-          className="w-full rounded-lg border border-zinc-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
+          className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none placeholder:text-sm"
         />
         <div className="flex items-center gap-2 text-sm">
           <label className="shrink-0 text-xs text-zinc-400">语言</label>
           <select
             value={lang}
             onChange={(e) => setLang(e.target.value as Lang)}
-            className="rounded-lg border border-zinc-300 px-2 py-1 text-sm focus:border-teal-500 focus:outline-none"
+            className="rounded-lg border border-zinc-300 px-2.5 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
           >
             {LANG_ORDER.map((l) => (
               <option key={l} value={l}>
@@ -412,7 +539,7 @@ function ReviewListCard({
                   setLang(cardLang(item.card));
                   setEditing(true);
                 }}
-                className="block w-full px-3 py-1.5 text-left text-zinc-700 hover:bg-zinc-50"
+                className="block w-full px-3 py-2 text-left text-zinc-700 hover:bg-zinc-50"
               >
                 编辑
               </button>
@@ -421,7 +548,7 @@ function ReviewListCard({
                   setMenuOpen(false);
                   deleteCard();
                 }}
-                className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-50"
+                className="block w-full px-3 py-2 text-left text-red-600 hover:bg-red-50"
               >
                 删除
               </button>

@@ -13,13 +13,13 @@ export const runtime = "nodejs";
 
 /** 每种卡片类型要补的内容标签与要求（只补缺的，不重复已有）。 */
 const KIND_PROMPTS: Record<string, string> = {
-  // 生词卡：读音/词性/释义/搭配/相关词/例句
-  word: `补充背面里缺失的、对学习有用的东西：
-- 读音（${"{lang}"}的读音建议：泰语/韩语给拉丁转写、日语给假名+罗马字、中文给拼音、英语给音标）
-- 词性 + 几个核心含义（释义按词典风格写精简洁，先给词性，再给 2~4 个最常用的意思，用分号或顿号隔开）
-- 常用搭配（2~3 个，含中文意思，可缺省）
-- 相关词（2~4 个，含中文意思，可缺省）
-- 一个用原语言写的例句（并附中文翻译，可缺省）`,
+  // 生词卡：释义（首行裸行、词性并进）+ 读音/搭配/例句标签
+  word: `补充背面里缺失的、对学习有用的东西（只补真正重要的，不要为了凑标签把每一项都写满；没有的项就跳过）：
+- 释义：放在第一行、直接写释义内容，不要写「释义：」标签；先给词性，用方括号标出（如 [名词]、[动词]），再接 2~4 个最常用的意思，用顿号「、」隔开并写在同一行（多个意思不要用换行或分号分隔）
+- 读音（${"{lang}"}的读音建议：泰语给罗马转写并带声调符号、英语给国际音标 IPA；韩语给韩文实际发音——仅当有音变、实际发音与拼写不同时（如 연락→열락、국물→궁물）才用韩文写出实际发音，发音与拼写相同时不写、留空；日语词正面已有假名、中文无需音标，不补）用「读音：」标签单独一行，排在释义下面
+- 搭配（可缺省）：常用的搭配、词组，合并写在一起，标签用「搭配：」；不要每个词都硬凑，没有就跳过
+- 一个用原语言写的完整例句，格式为「例句（简体中文翻译）」，括号里必须是这句的中文翻译、严禁重复原句，标注为「例句：」（可缺省）
+- 拓展（可缺省）：只在这个词有需要特别解释的用法、语气、文化背景时才写，没有就跳过`,
   // 例句卡：原句译文/长难句解析/句子里的生词/用法
   example: `把它当例句解释清楚，补充背面里缺失的、对学习有用的东西：
 - 整句中文翻译
@@ -30,7 +30,7 @@ const KIND_PROMPTS: Record<string, string> = {
   grammar: `把它当语法点解释清楚，补充背面里缺失的、对学习有用的东西：
 - 语法说明（这个语法的含义、怎么用，简体中文）
 - 接续规则（接什么样的词 / 动词哪个形 / 名词形容词接法，可多条）
-- 一个用原语言写的例句（并附中文翻译）
+- 一个用原语言写的例句，格式为「例句（简体中文翻译）」，括号里必须是中文翻译、严禁重复原句
 - 用法或语气上的注意点`,
 };
 
@@ -44,7 +44,8 @@ function systemPrompt(langLabel: string, kind: string): string {
 - 保留背面里已有的、正确的内容，不要删掉或覆盖用户写对的信息；
 - ${filled}；
 - 背面里如果已经有哪一项，就不要再重复写一遍；
-- 按「标签：内容」分行输出，一段一行（例如「读音：…」「释义：…」「搭配：…」「例句：…」），方便直接在背面里读；
+- 生词（word）的释义放第一行、直接写内容不加「释义：」标签（词性用方括号并进释义）；读音、搭配、例句等其余项按「标签：内容」分行、一段一行（例如「读音：…」「搭配：…」「例句：…」）；
+- 例句（example）卡全部按「标签：内容」分行、一段一行；
 - 不要输出代码块、不要加「以下是解释」「补充如下」这类标题或客套话，只输出完善后的背面正文。`;
 }
 
@@ -58,14 +59,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "未登录" }, { status: 401 });
   }
 
+  // 限制正/背面长度，防把数 MB 文本整段塞进 prompt 烧额度。
+  const MAX_LEN = 5000;
+  const KINDS = new Set(["word", "example", "grammar"]);
   let front = "";
   let back = "";
   let kind: string | null = null;
   try {
     const body = await req.json();
-    front = String(body?.front ?? "").trim();
-    back = String(body?.back ?? "").trim();
-    kind = body?.kind ? String(body.kind) : null;
+    front = String(body?.front ?? "").trim().slice(0, MAX_LEN);
+    back = String(body?.back ?? "").trim().slice(0, MAX_LEN);
+    const rawKind = body?.kind ? String(body.kind) : null;
+    kind = rawKind && KINDS.has(rawKind) ? rawKind : null;
   } catch {
     return NextResponse.json({ error: "请求体不是合法 JSON" }, { status: 400 });
   }
@@ -82,10 +87,15 @@ export async function POST(req: Request) {
       maxTokens: 1200,
       temperature: 0.4,
     });
-    // 去掉可能的代码块围栏 / 首尾空行，得到纯文本解释。
+    // 去掉可能的代码块围栏 / 首尾空行，得到纯文本解释；再折叠掉标签之间可能出现的空行（\n+ → \n），
+    // 避免「补全」后各标签之间空一行。
     const fenced = raw.match(/```(?:[\s\S]*?)```/);
     const text = fenced ? fenced[0].replace(/^```[^\n]*\n?/, "").replace(/```$/, "") : raw;
-    const explanation = text.trim();
+    const explanation = text
+      .split(/\n+/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .join("\n");
     if (!explanation) {
       return NextResponse.json({ error: "AI 没有返回解释" }, { status: 502 });
     }

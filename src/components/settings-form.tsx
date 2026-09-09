@@ -4,9 +4,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { UserSettings } from "@/lib/types";
+import { SettingsGroup, SettingsRow } from "./settings-row";
 
 /**
- * 设置页表单：每日复习目标 + 复习提醒 + 退出登录。
+ * 设置页「学习」分组：每日复习目标 + 复习提醒。
  * 设置存进 user_settings 表（每人一条），复习目标会限制每轮背诵的张数。
  */
 export function SettingsForm({ initial }: { initial: UserSettings }) {
@@ -14,6 +15,7 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
   const [dailyGoal, setDailyGoal] = useState(initial.daily_goal);
   const [reminderEnabled, setReminderEnabled] = useState(initial.reminder_enabled);
   const [reminderTime, setReminderTime] = useState(initial.reminder_time ?? "20:00");
+  const [reviewShuffle, setReviewShuffle] = useState(initial.review_shuffle);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +49,7 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
           daily_goal: Math.max(1, dailyGoal),
           reminder_enabled: reminderEnabled,
           reminder_time: reminderEnabled ? reminderTime : null,
+          review_shuffle: reviewShuffle,
         },
         { onConflict: "user_id" }
       );
@@ -60,35 +63,31 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
   }
 
   return (
-    <div className="space-y-6">
-      {/* 每日目标 */}
-      <section className="card-soft p-4">
-        <h2 className="text-sm font-semibold text-zinc-900">每日背诵目标</h2>
-        <p className="mt-0.5 text-xs text-zinc-500">
-          每天想背多少张，复习时每轮最多背这些（类似 Anki 的每日计划）。
-        </p>
-        <div className="mt-3 flex items-center gap-2">
-          <input
-            type="number"
-            min={1}
-            value={dailyGoal}
-            onChange={(e) => setDailyGoal(parseInt(e.target.value, 10) || 1)}
-            className="w-24 rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-800 focus:border-teal-500 focus:outline-none"
-          />
-          <span className="text-sm text-zinc-500">张 / 天</span>
-        </div>
-      </section>
+    <div className="space-y-3">
+      <SettingsGroup title="学习">
+        <SettingsRow
+          label="每日背诵目标"
+          hint="每轮最多背这些张（类似 Anki 每日计划）"
+        >
+          <div className="flex shrink-0 items-center gap-1.5">
+            <input
+              type="number"
+              min={1}
+              value={dailyGoal}
+              onChange={(e) => setDailyGoal(parseInt(e.target.value, 10) || 1)}
+              className="w-16 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-right text-sm text-zinc-800 focus:border-teal-500 focus:outline-none"
+            />
+            <span className="text-xs text-zinc-400">张/天</span>
+          </div>
+        </SettingsRow>
 
-      {/* 复习提醒 */}
-      <section className="card-soft p-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-zinc-900">每日复习提醒</h2>
+        <SettingsRow label="每日学习提醒" hint="到点且应用打开时提醒">
           <button
             type="button"
             role="switch"
             aria-checked={reminderEnabled}
             onClick={() => setReminderEnabled((v) => !v)}
-            className={`relative h-6 w-11 rounded-full transition-colors ${
+            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
               reminderEnabled ? "bg-teal-600" : "bg-zinc-200"
             }`}
           >
@@ -98,55 +97,43 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
               }`}
             />
           </button>
-        </div>
+        </SettingsRow>
+
+        <SettingsRow label="默认随机顺序背诵" hint="每次进背诵自动洗牌，可临时切回顺序">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={reviewShuffle}
+            onClick={() => setReviewShuffle((v) => !v)}
+            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+              reviewShuffle ? "bg-teal-600" : "bg-zinc-200"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                reviewShuffle ? "left-[22px]" : "left-0.5"
+              }`}
+            />
+          </button>
+        </SettingsRow>
+
         {reminderEnabled && (
-          <div className="mt-3">
+          <SettingsRow label="提醒时间">
             <input
               type="time"
               value={reminderTime}
               onChange={(e) => setReminderTime(e.target.value)}
-              className="rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-800 focus:border-teal-500 focus:outline-none"
+              className="shrink-0 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-800 focus:border-teal-500 focus:outline-none"
             />
-            <p className="mt-1.5 text-xs text-zinc-400">
-              到点且应用打开时会弹提醒（完整离线推送后续版本加入）。
-            </p>
-          </div>
+          </SettingsRow>
         )}
-      </section>
+      </SettingsGroup>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="px-1 text-sm text-red-600">{error}</p>}
 
-      <button
-        onClick={save}
-        disabled={busy}
-        className="btn-brand w-full"
-      >
-        {busy ? "保存中…" : saved ? "已保存 ✓" : "保存设置"}
+      <button onClick={save} disabled={busy} className="btn-brand w-full">
+        {busy ? "保存中…" : saved ? "已保存 ✓" : "保存学习设置"}
       </button>
     </div>
-  );
-}
-
-/** 退出登录按钮（单独放在设置页最底部）。 */
-export function LogoutButton() {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-
-  async function logout() {
-    setBusy(true);
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.replace("/login");
-    router.refresh();
-  }
-
-  return (
-    <button
-      onClick={logout}
-      disabled={busy}
-      className="w-full rounded-xl border border-zinc-200 px-4 py-2.5 text-sm text-zinc-600 transition-colors hover:bg-zinc-50 hover:text-zinc-900 disabled:opacity-60"
-    >
-      {busy ? "退出中…" : "退出登录"}
-    </button>
   );
 }

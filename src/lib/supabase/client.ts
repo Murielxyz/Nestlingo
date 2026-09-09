@@ -4,9 +4,43 @@ import { supabaseUrl, supabaseAnonKey } from "./env";
 /**
  * 浏览器端（客户端组件）使用的 Supabase client。
  * 只在组件被调用时创建，避免在服务端被误用。
+ *
+ * 返回的 client 会拦截 `.from(...)` 上的 insert/update/delete/upsert：
+ * 一发起写操作就通知服务端清掉 Supabase 读缓存（见 query-cache.ts），
+ * 这样组件里做完写、再 router.refresh()，服务端重新渲染时读到的才是新数据。
+ * 用 fire-and-forget 的 fetch，不阻塞写本身。
  */
 export function createClient() {
-  return createBrowserClient(supabaseUrl, supabaseAnonKey);
+  const client = createBrowserClient(supabaseUrl, supabaseAnonKey);
+  const from = client.from.bind(client);
+  client.from = ((table: string) => {
+    const builder = from(table);
+    return new Proxy(builder, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (
+          typeof value === "function" &&
+          (prop === "insert" || prop === "update" || prop === "delete" || prop === "upsert")
+        ) {
+          return (...args: unknown[]) => {
+            mutePurge();
+            return value.apply(target, args);
+          };
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  }) as typeof client.from;
+  return client;
+}
+
+/** 写操作一开始就清服务端缓存（不等写完成；新的读发生在写之后，读到的是新数据）。 */
+function mutePurge() {
+  try {
+    void fetch("/api/cache/purge", { method: "POST" }).catch(() => {});
+  } catch {
+    // 忽略：清缓存失败只影响短暂读到旧值，不打断写。
+  }
 }
 
 /**

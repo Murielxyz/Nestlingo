@@ -9,11 +9,12 @@ import { LANG_LABEL, type Lang } from "@/lib/lang-detect";
 
 export const runtime = "nodejs";
 
-const SYSTEM_PROMPT = `你是语言学习助手。用户给你一批「生词 + 语言」，请为每个词按它标注的语言，各造一句地道、自然、适合学习的例句。
+const SYSTEM_PROMPT = `你是语言学习助手。用户给你一批「生词 + 语言 + 词义」，请为每个词按它标注的语言，各造一句地道、自然、适合学习的例句，并标出要填的那个单词。
 
 要求：
 - 每个词单独造一句，句子必须包含该词，且该词的写法保留原样（不要变形，不要用近义词替代）；
-- 用 ⟦ ⟧ 把该词在句中的位置包起来（例如：他⟦趸卖⟧了一车菜）；
+- 只把「要填的那一个单词」用 ⟦ ⟧ 包起来（例如：他⟦趸卖⟧了一车菜）；
+- 如果该词是短语 / 搭配（含空格或由多个词组成），句子要包含它，但只把其中最核心、最该背的那个单词用 ⟦ ⟧ 包起来（依据词义判断），不要包整个短语；
 - 同时给出这句的简体中文翻译，放 translation 字段（整句翻译，不是只翻这个词）；
 - 语言：thai=泰语、korean=韩语、chinese=中文、japanese=日语、other=英语；
 - 只输出一个 JSON 对象，不要 Markdown 代码块、不要任何解释或前缀，格式：
@@ -51,16 +52,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "未登录" }, { status: 401 });
   }
 
-  // 校验请求体：items 是一批 { word, lang }。
-  let items: { word: string; lang: Lang }[] = [];
+  // 校验请求体：items 是一批 { word, lang, meaning }。限制数量与单字长度，防一次性塞海量词烧额度。
+  const MAX_ITEMS = 40;
+  const MAX_WORD_LEN = 100;
+  let items: { word: string; lang: Lang; meaning: string }[] = [];
   try {
     const body = await req.json();
     items = (Array.isArray(body?.items) ? body.items : [])
-      .map((it: Record<string, unknown>) => ({
-        word: String(it?.word ?? "").trim(),
-        lang: (String(it?.lang ?? "other") as Lang) || "other",
-      }))
-      .filter((it: { word: string }) => it.word);
+      .map((it: Record<string, unknown>) => {
+        const lang = String(it?.lang ?? "other") as Lang;
+        return {
+          word: String(it?.word ?? "").trim().slice(0, MAX_WORD_LEN),
+          lang: lang in LANG_LABEL ? lang : ("other" as Lang),
+          meaning: String(it?.meaning ?? "").trim().slice(0, MAX_WORD_LEN),
+        };
+      })
+      .filter((it: { word: string }) => it.word)
+      .slice(0, MAX_ITEMS);
   } catch {
     return NextResponse.json({ error: "请求体不是合法 JSON" }, { status: 400 });
   }
@@ -69,7 +77,7 @@ export async function POST(req: Request) {
   }
 
   const user = JSON.stringify(
-    items.map((it) => ({ word: it.word, lang: LANG_LABEL[it.lang] ?? it.lang }))
+    items.map((it) => ({ word: it.word, lang: LANG_LABEL[it.lang] ?? it.lang, meaning: it.meaning }))
   );
 
   try {

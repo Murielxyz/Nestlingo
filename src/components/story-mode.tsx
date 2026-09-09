@@ -64,6 +64,12 @@ export function StoryMode({ cards }: { cards: StoryCard[] }) {
     );
   }
 
+  /** 重新随机勾选：张数也随机（1～最多 8 张），方便快速换一批词。 */
+  function reroll() {
+    const n = Math.max(1, Math.min(cards.length, 1 + Math.floor(Math.random() * 8)));
+    setSelected(new Set(shuffle(cards).slice(0, n).map((c) => c.id)));
+  }
+
   async function generate() {
     const chosen = cards.filter((c) => selected.has(c.id));
     if (chosen.length === 0) return;
@@ -159,7 +165,7 @@ export function StoryMode({ cards }: { cards: StoryCard[] }) {
             </p>
             <button
               onClick={toggleRead}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-teal-200 px-3 py-1.5 text-sm font-medium text-teal-600 transition-colors hover:bg-teal-50"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-teal-200 px-3 py-2 text-sm font-medium text-teal-600 transition-colors hover:bg-teal-50"
             >
               {speaking ? <Square className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
               {speaking ? "停止" : "朗读"}
@@ -175,7 +181,7 @@ export function StoryMode({ cards }: { cards: StoryCard[] }) {
             <div className="mt-3">
               <button
                 onClick={() => setShowTranslation((v) => !v)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
               >
                 {showTranslation ? "隐藏翻译" : "查看翻译"}
               </button>
@@ -199,7 +205,7 @@ export function StoryMode({ cards }: { cards: StoryCard[] }) {
                 setShowTranslation(false);
                 setActiveWord(null);
               }}
-              className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-zinc-200 px-4 py-2 text-sm text-zinc-600 transition-colors hover:bg-zinc-50"
+              className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-zinc-200 px-4 py-2.5 text-sm text-zinc-600 transition-colors hover:bg-zinc-50"
             >
               <RotateCcw className="h-4 w-4" />
               重新选词
@@ -237,10 +243,10 @@ export function StoryMode({ cards }: { cards: StoryCard[] }) {
                 </p>
                 <button
                   onClick={() => setActiveWord(null)}
-                  className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
                   aria-label="关闭"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-5 w-5" />
                 </button>
               </div>
               <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-zinc-600">
@@ -259,26 +265,36 @@ export function StoryMode({ cards }: { cards: StoryCard[] }) {
       <div className="card-soft p-5">
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm text-zinc-600">
-            勾选要编进故事的词（已选{" "}
-            <span className="font-semibold text-teal-700">{selected.size}</span>{" "}
-            个）
+            选词
+            <span className="ml-1.5 rounded-full bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-700">
+              已选 {selected.size}
+            </span>
           </p>
-          <button
-            onClick={toggleAll}
-            className="text-sm text-teal-600 transition-colors hover:text-teal-700"
-          >
-            {selected.size === cards.length ? "清空" : "全选"}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              onClick={reroll}
+              className="inline-flex items-center gap-1 text-sm text-teal-600 transition-colors hover:text-teal-700"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              随机
+            </button>
+            <button
+              onClick={toggleAll}
+              className="text-sm text-teal-600 transition-colors hover:text-teal-700"
+            >
+              {selected.size === cards.length ? "清空" : "全选"}
+            </button>
+          </div>
         </div>
 
-        <div className="mt-3 max-h-80 space-y-1.5 overflow-y-auto pr-1">
+        <div className="mt-3 max-h-[45vh] space-y-1.5 overflow-y-auto overscroll-contain pr-1">
           {cards.map((c) => {
             const on = selected.has(c.id);
             return (
               <button
                 key={c.id}
                 onClick={() => toggle(c.id)}
-                className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
+                className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors ${
                   on
                     ? "border-teal-300 bg-teal-50"
                     : "border-zinc-200 bg-white hover:border-teal-200"

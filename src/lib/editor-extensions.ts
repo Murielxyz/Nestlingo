@@ -5,6 +5,7 @@ import StarterKit from "@tiptap/starter-kit";
 import Highlight from "@tiptap/extension-highlight";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
+import TextAlign from "@tiptap/extension-text-align";
 import { Table } from "@tiptap/extension-table";
 import TableRow from "@tiptap/extension-table-row";
 import TableCell from "@tiptap/extension-table-cell";
@@ -21,9 +22,11 @@ import { CalloutActions } from "./callout-actions";
 // 不再用自定义 NodeView（它跟 columnResizing 抢节点视图，导致拖拽失效）。
 const TableResizable = Table.configure({ resizable: true });
 
-// 链接：粘贴 URL 后跟空格 / 回车自动转成可点击链接（openOnClick 点击即开新标签）。
+// 链接：粘贴 URL 后跟空格 / 回车自动转成可点击链接。
+// openOnClick: false —— 点链接不会跳转到新标签，否则想选中链接/token 时一碰就跳走、很棘手；
+// 在内容可编辑区内点链接会选中它（可取消链接 / 取地址），真正打开用「目标标签」即可。
 const LinkAuto = Link.configure({
-  openOnClick: true,
+  openOnClick: false,
   autolink: true,
   linkOnPaste: true,
   HTMLAttributes: {
@@ -34,9 +37,13 @@ const LinkAuto = Link.configure({
 });
 
 export const editorExtensions = [
-  StarterKit,
+  // v3 的 StarterKit 内置了 link 扩展，与下方自定义的 LinkAuto 重名会导致编辑器创建失败
+  // （Duplicate extension names: ['link']），这里关掉内置的，保留带 openOnClick:false 的 LinkAuto。
+  StarterKit.configure({ link: false }),
   LinkAuto,
   Highlight,
+  // 文字对齐（左/中/右）：作用于标题和段落；表格单元格内也是段落，所以能对齐单元格内容。
+  TextAlign.configure({ types: ["heading", "paragraph"] }),
   Translation,
   Furigana,
   Image,

@@ -258,7 +258,7 @@ export function CollectWordsModal({
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`rounded-full px-3 py-1 text-sm transition-colors ${
+              className={`rounded-full px-3 py-2 text-sm transition-colors ${
                 tab === t
                   ? "bg-teal-600 font-semibold text-white"
                   : "border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
@@ -289,7 +289,7 @@ export function CollectWordsModal({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={`搜索未归类的词（共 ${unclassified.length} 个）`}
-                className="w-full rounded-lg border border-zinc-200 py-2 pl-9 pr-3 text-sm focus:border-teal-500 focus:outline-none"
+                className="w-full rounded-lg border border-zinc-200 py-2.5 pl-9 pr-3 text-sm placeholder:text-sm focus:border-teal-500 focus:outline-none placeholder:text-sm"
               />
             </div>
             <div className="max-h-72 space-y-1 overflow-y-auto">
@@ -340,7 +340,7 @@ export function CollectWordsModal({
                   value={front}
                   onChange={(e) => setFront(e.target.value)}
                   placeholder="如 สวย"
-                  className="min-w-0 flex-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none"
+                  className="min-w-0 flex-1 rounded-lg border border-zinc-200 px-3 py-2.5 text-sm focus:border-teal-500 focus:outline-none placeholder:text-sm"
                 />
                 <button
                   type="button"
@@ -364,7 +364,7 @@ export function CollectWordsModal({
                 value={back}
                 onChange={(e) => setBack(e.target.value)}
                 placeholder="如 漂亮"
-                className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none"
+                className="w-full rounded-lg border border-zinc-200 px-3 py-2.5 text-sm placeholder:text-sm focus:border-teal-500 focus:outline-none placeholder:text-sm"
               />
             </div>
             <button
@@ -384,7 +384,7 @@ export function CollectWordsModal({
               onChange={(e) => setText(e.target.value)}
               placeholder={"粘贴词表 / 表格，一行一个：\n词—释义\n词  读音  释义\n或从 Excel 复制的表格"}
               rows={8}
-              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none"
+              className="w-full rounded-lg border border-zinc-200 px-3 py-2.5 text-sm placeholder:text-sm focus:border-teal-500 focus:outline-none"
             />
             <button
               onClick={pasteCards}
@@ -407,7 +407,7 @@ export function CollectWordsModal({
                 value={collectionQuery}
                 onChange={(e) => setCollectionQuery(e.target.value)}
                 placeholder="搜索笔记标题 / 词面…"
-                className="w-full rounded-lg border border-zinc-200 py-2 pl-9 pr-3 text-sm focus:border-teal-500 focus:outline-none"
+                className="w-full rounded-lg border border-zinc-200 py-2 pl-9 pr-3 text-sm placeholder:text-sm focus:border-teal-500 focus:outline-none"
               />
             </div>
             <div className="max-h-72 space-y-1 overflow-y-auto">

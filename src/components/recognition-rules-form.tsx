@@ -7,7 +7,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2 } from "lucide-react";
+import { ChevronDown, Plus, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { RecognitionRules, SplitRule } from "@/lib/types";
 import { RECOGNITION_PRESETS, EMPTY_RULES } from "@/lib/recognition-presets";
@@ -50,7 +50,6 @@ type Values = {
   back: string;
   extra: string;
   calloutOnly: boolean;
-  reading: "front" | "back";
   wrapBackSpaces: boolean;
   splitBySemicolon: boolean;
   customRules: SplitRule[];
@@ -63,7 +62,6 @@ function join(rules: RecognitionRules | null): Values {
     back: r.back.join("、"),
     extra: r.extra.join("、"),
     calloutOnly: r.calloutOnly ?? false,
-    reading: r.reading ?? "back",
     wrapBackSpaces: r.wrapBackSpaces ?? true,
     splitBySemicolon: r.splitBySemicolon ?? false,
     customRules: (r.customRules ?? []).map((rule) => ({ ...rule })),
@@ -110,6 +108,8 @@ export function RecognitionRulesForm({ initial }: { initial: RecognitionRules | 
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 自定义规则手风琴：一次只展开一条（规则多了列表不拉太长）。
+  const [expandedRule, setExpandedRule] = useState<number | null>(null);
 
   function setField(key: "front" | "back" | "extra", value: string) {
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -125,6 +125,7 @@ export function RecognitionRulesForm({ initial }: { initial: RecognitionRules | 
 
   function addRule() {
     setValues((prev) => ({ ...prev, customRules: [...prev.customRules, { ...NEW_RULE }] }));
+    setExpandedRule(values.customRules.length); // 新规则排在最后，展开它方便直接填
     setSaved(false);
   }
 
@@ -141,6 +142,7 @@ export function RecognitionRulesForm({ initial }: { initial: RecognitionRules | 
       ...prev,
       customRules: prev.customRules.filter((_, idx) => idx !== i),
     }));
+    setExpandedRule(null); // 删完收起，避免展开索引错位
     setSaved(false);
   }
 
@@ -163,7 +165,6 @@ export function RecognitionRulesForm({ initial }: { initial: RecognitionRules | 
       extra: split(values.extra),
       separator: null,
       calloutOnly: values.calloutOnly,
-      reading: values.reading,
       wrapBackSpaces: values.wrapBackSpaces,
       splitBySemicolon: values.splitBySemicolon,
       // 没名字的规则、或「自定义正则」没填正则的规则，视为无效，丢弃。
@@ -217,7 +218,7 @@ export function RecognitionRulesForm({ initial }: { initial: RecognitionRules | 
                 value={values[f.key]}
                 onChange={(e) => setField(f.key, e.target.value)}
                 placeholder={f.placeholder}
-                className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-800 focus:border-teal-500 focus:outline-none"
+                className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm placeholder:text-sm text-zinc-800 focus:border-teal-500 focus:outline-none"
               />
             </div>
           ))}
@@ -246,73 +247,96 @@ export function RecognitionRulesForm({ initial }: { initial: RecognitionRules | 
           </p>
         ) : (
           <div className="space-y-2">
-            {values.customRules.map((rule, i) => (
-              <div key={i} className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-3">
-                <div className="flex items-center gap-2">
-                  <input
-                    value={rule.name}
-                    onChange={(e) => updateRule(i, { name: e.target.value })}
-                    placeholder="规则名称（如：斜杠分隔）"
-                    className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-800 focus:border-teal-500 focus:outline-none"
-                  />
-                  <button
-                    onClick={() => removeRule(i)}
-                    className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600"
-                    aria-label="删除规则"
+            {values.customRules.map((rule, i) => {
+              const isOpen = expandedRule === i;
+              return (
+                <div key={i} className="rounded-xl border border-zinc-200 bg-zinc-50/60">
+                  {/* 标题行：默认收起，点一下展开 / 收起（规则多了列表不拉太长） */}
+                  <div
+                    onClick={() => setExpandedRule(isOpen ? null : i)}
+                    className="flex cursor-pointer items-center gap-2 px-3 py-2.5"
                   >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  <select
-                    value={rule.mode}
-                    onChange={(e) => updateRule(i, { mode: e.target.value as SplitRule["mode"] })}
-                    className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-700 focus:border-teal-500 focus:outline-none"
-                  >
-                    {(Object.keys(MODE_LABEL) as SplitRule["mode"][]).map((m) => (
-                      <option key={m} value={m}>
-                        {MODE_LABEL[m]}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={rule.kind}
-                    onChange={(e) => updateRule(i, { kind: e.target.value as SplitRule["kind"] })}
-                    className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-700 focus:border-teal-500 focus:outline-none"
-                  >
-                    {(Object.keys(KIND_LABEL) as SplitRule["kind"][]).map((k) => (
-                      <option key={k} value={k}>
-                        {KIND_LABEL[k]}
-                      </option>
-                    ))}
-                  </select>
-
-                  {rule.mode === "custom" && (
-                    <input
-                      value={rule.customPattern ?? ""}
-                      onChange={(e) => updateRule(i, { customPattern: e.target.value })}
-                      placeholder="正则，如 | 或 =="
-                      className="col-span-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700 focus:border-teal-500 focus:outline-none"
+                    <ChevronDown
+                      className={`h-4 w-4 shrink-0 text-zinc-400 transition-transform ${
+                        isOpen ? "rotate-180" : ""
+                      }`}
                     />
-                  )}
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800">
+                      {rule.name.trim() || "未命名规则"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeRule(i);
+                      }}
+                      className="shrink-0 rounded-md p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                      aria-label="删除规则"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
 
-                  <select
-                    value={rule.appliesTo}
-                    onChange={(e) =>
-                      updateRule(i, { appliesTo: e.target.value as SplitRule["appliesTo"] })
-                    }
-                    className="col-span-2 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-700 focus:border-teal-500 focus:outline-none"
-                  >
-                    {(Object.keys(APPLIES_LABEL) as SplitRule["appliesTo"][]).map((a) => (
-                      <option key={a} value={a}>
-                        {APPLIES_LABEL[a]}
-                      </option>
-                    ))}
-                  </select>
+                  {isOpen && (
+                    <div className="border-t border-zinc-100 p-3">
+                      <input
+                        value={rule.name}
+                        onChange={(e) => updateRule(i, { name: e.target.value })}
+                        placeholder="规则名称（如：斜杠分隔）"
+                        className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-800 focus:border-teal-500 focus:outline-none placeholder:text-sm"
+                      />
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <select
+                          value={rule.mode}
+                          onChange={(e) => updateRule(i, { mode: e.target.value as SplitRule["mode"] })}
+                          className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-700 focus:border-teal-500 focus:outline-none"
+                        >
+                          {(Object.keys(MODE_LABEL) as SplitRule["mode"][]).map((m) => (
+                            <option key={m} value={m}>
+                              {MODE_LABEL[m]}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={rule.kind}
+                          onChange={(e) => updateRule(i, { kind: e.target.value as SplitRule["kind"] })}
+                          className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-700 focus:border-teal-500 focus:outline-none"
+                        >
+                          {(Object.keys(KIND_LABEL) as SplitRule["kind"][]).map((k) => (
+                            <option key={k} value={k}>
+                              {KIND_LABEL[k]}
+                            </option>
+                          ))}
+                        </select>
+
+                        {rule.mode === "custom" && (
+                          <input
+                            value={rule.customPattern ?? ""}
+                            onChange={(e) => updateRule(i, { customPattern: e.target.value })}
+                            placeholder="正则，如 | 或 =="
+                            className="col-span-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-700 focus:border-teal-500 focus:outline-none placeholder:text-sm"
+                          />
+                        )}
+
+                        <select
+                          value={rule.appliesTo}
+                          onChange={(e) =>
+                            updateRule(i, { appliesTo: e.target.value as SplitRule["appliesTo"] })
+                          }
+                          className="col-span-2 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-700 focus:border-teal-500 focus:outline-none"
+                        >
+                          {(Object.keys(APPLIES_LABEL) as SplitRule["appliesTo"][]).map((a) => (
+                            <option key={a} value={a}>
+                              {APPLIES_LABEL[a]}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -320,41 +344,6 @@ export function RecognitionRulesForm({ initial }: { initial: RecognitionRules | 
       {/* 全局选项 */}
       <div className="mb-5">
         <p className="mb-2 text-xs font-medium text-zinc-500">全局选项</p>
-
-        <div className="mb-3">
-          <span className="mb-1 block text-xs font-medium text-zinc-600">读音放哪</span>
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              onClick={() => {
-                setValues((prev) => ({ ...prev, reading: "back" }));
-                setSaved(false);
-              }}
-              className={`rounded-full border px-3 py-1 text-sm transition-colors ${
-                values.reading === "back"
-                  ? "border-teal-600 bg-teal-600 font-semibold text-white"
-                  : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"
-              }`}
-            >
-              背面
-            </button>
-            <button
-              onClick={() => {
-                setValues((prev) => ({ ...prev, reading: "front" }));
-                setSaved(false);
-              }}
-              className={`rounded-full border px-3 py-1 text-sm transition-colors ${
-                values.reading === "front"
-                  ? "border-teal-600 bg-teal-600 font-semibold text-white"
-                  : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"
-              }`}
-            >
-              正面
-            </button>
-          </div>
-          <p className="mt-1.5 text-xs text-zinc-400">
-            背面 = 第一行【读音】、第二行释义；正面 = 词（读音）。自动识别「读音/发音」列、括号（读音）、中间罗马音。
-          </p>
-        </div>
 
         <div className="space-y-2">
           <RuleToggle
@@ -389,16 +378,10 @@ export function RecognitionRulesForm({ initial }: { initial: RecognitionRules | 
 
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
-      <div className="mt-4 flex items-center gap-3">
-        <button
-          onClick={save}
-          disabled={busy}
-          className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-teal-700 disabled:opacity-60"
-        >
-          {busy ? "保存中…" : saved ? "已保存 ✓" : "保存识别规则"}
-        </button>
-        <p className="text-xs text-zinc-400">留空则用内置默认规则。</p>
-      </div>
+      <button onClick={save} disabled={busy} className="btn-brand w-full">
+        {busy ? "保存中…" : saved ? "已保存 ✓" : "保存识别规则"}
+      </button>
+      <p className="mt-2 text-xs text-zinc-400">改完点下方保存；留空则用内置默认规则。</p>
     </div>
   );
 }

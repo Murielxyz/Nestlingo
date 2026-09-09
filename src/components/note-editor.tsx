@@ -4,12 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Folder, ExternalLink } from "lucide-react";
+import { ExternalLink, BookOpen, Pencil } from "lucide-react";
 import { createClient, detachMaterialsFromNote } from "@/lib/supabase/client";
 import { ConvertToCards } from "./convert-to-cards";
 import { ShareModal } from "./share-modal";
 import { CardSidebar } from "./card-sidebar";
 import { BackButton } from "./back-button";
+import { FolderPickerSheet } from "./folder-picker-sheet";
 import type { Folder as FolderType, Note, SourceMaterial } from "@/lib/types";
 import type { JSONContent } from "@tiptap/core";
 
@@ -49,19 +50,51 @@ export function NoteEditor({
   const [menuOpen, setMenuOpen] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
-  const [newFolderOpen, setNewFolderOpen] = useState(false);
-  const [newFolderName, setNewFolderName] = useState("");
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [showCards, setShowCards] = useState(false);
+  // 阅读 / 编辑模式：阅读态内容只读（点下划线词弹卡查义、滚动正常、无软键盘），编辑态正常编辑。
+  const [readOnly, setReadOnly] = useState(false);
+  // 标题里按回车 → 焦点移到正文编辑器（而不是在标题里换行）。
+  const [focusBodySignal, setFocusBodySignal] = useState(0);
 
   // 实时保存用：保存时读 ref 的最新值，避免 debounce 闭包拿到旧 title/folderId。
   const titleRef = useRef(note.title);
   const folderIdRef = useRef(note.folder_id ?? "");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dirtyRef = useRef(false);
+  // 标题改成可自动增高的 textarea（长标题换行，不再被单行 input 裁掉后半截）。
+  const titleInputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     folderIdRef.current = folderId;
   }, [folderId]);
+
+  // 标题随内容自动增高：先复位再取 scrollHeight，长标题能完整铺开、可换行。
+  useEffect(() => {
+    const el = titleInputRef.current;
+    if (!el) return;
+    const grow = () => {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    };
+    grow();
+    // 中文/泰语等异体字在字体载入完成后行高会变，重测一次避免量矮被剪；
+    // 转屏 / 侧栏开合也会改换行数，一并重测。卸载时清理监听。
+    let cancelled = false;
+    const remeasure = () => {
+      if (!cancelled) grow();
+    };
+    window.addEventListener("resize", remeasure);
+    try {
+      document.fonts?.ready?.then(() => {
+        if (!cancelled) grow();
+      });
+    } catch {}
+    return () => {
+      cancelled = true;
+      window.removeEventListener("resize", remeasure);
+    };
+  }, [title]);
 
   const contentRef = useRef<{ json: JSONContent | null; text: string }>({
     json: (note.content ?? null) as JSONContent | null,
@@ -101,6 +134,32 @@ export function NoteEditor({
         router.refresh();
       }
     }, 1000);
+  }
+
+  /** 翻译笔记标题：把标题文字译成简体中文（译文与原标题不同才替换，避免白改）。 */
+  async function translateTitle() {
+    const t = titleRef.current.trim();
+    if (!t) return;
+    try {
+      const res = await fetch("/api/ai/translate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ paragraphs: [t] }),
+        signal: AbortSignal.timeout(120_000),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "翻译标题失败");
+      const tr =
+        Array.isArray(data?.translations) && typeof data.translations[0] === "string"
+          ? data.translations[0].trim()
+          : "";
+      if (!tr || tr === t) return;
+      setTitle(tr);
+      titleRef.current = tr;
+      scheduleAutoSave();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    }
   }
 
   // 离开页面前若还有未保存的改动，尽力落一次库（不阻塞导航）。
@@ -175,29 +234,27 @@ export function NoteEditor({
     await save();
   }
 
-  /** 把笔记收录到某个文件夹。 */
-  async function moveToFolder(id: string) {
-    setFolderId(id);
+  /** 把笔记收录到某个文件夹（null = 无文件夹）。 */
+  async function moveToFolder(id: string | null) {
+    setFolderId(id ?? "");
     setMenuOpen(false);
+    setFolderPickerOpen(false);
     await save(id);
   }
 
-  /** 新建一个文件夹，并把笔记直接收进去。 */
-  async function createFolderAndMove() {
-    const name = newFolderName.trim();
-    if (!name) return;
+  /** 从底部弹层「新建文件夹」：建完直接把笔记收进去。 */
+  async function createFolderAndMove(name: string) {
+    if (!name.trim()) return;
     const supabase = createClient();
     const { data, error } = await supabase
       .from("folders")
-      .insert({ name })
+      .insert({ name: name.trim() })
       .select("id")
       .single();
     if (error || !data) {
       setError(error?.message ?? "创建文件夹失败。");
       return;
     }
-    setNewFolderName("");
-    setNewFolderOpen(false);
     await moveToFolder(data.id);
   }
 
@@ -231,7 +288,7 @@ export function NoteEditor({
 
   const editorPane = (
     <>
-      <div className="px-4 pt-5 md:px-8">
+      <div className="bg-white px-4 pt-2 md:px-8">
         {sourceMaterials.length > 0 && (
           <div className="mb-3 flex flex-wrap items-center gap-2">
             {sourceMaterials.map((sm) => (
@@ -247,7 +304,8 @@ export function NoteEditor({
             ))}
           </div>
         )}
-        <input
+        <textarea
+          ref={titleInputRef}
           value={title}
           onChange={(e) => {
             setTitle(e.target.value);
@@ -255,10 +313,40 @@ export function NoteEditor({
             scheduleAutoSave();
           }}
           placeholder="标题"
-          className="w-full border-none bg-transparent text-2xl font-bold text-zinc-900 placeholder-zinc-300 focus:outline-none md:text-3xl"
+          rows={1}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              setFocusBodySignal((s) => s + 1);
+            }
+          }}
+          onInput={(e) => {
+            const el = e.currentTarget;
+            el.style.height = "auto";
+            el.style.height = `${el.scrollHeight}px`;
+          }}
+          className="note-title-input max-h-[40vh] min-h-[1.5em] w-full resize-none overflow-y-auto border-none bg-transparent text-3xl font-bold leading-tight text-zinc-900 placeholder-zinc-300 focus:outline-none"
         />
       </div>
-      <RichTextEditor initialContent={note.content} onChange={handleChange} noteId={note.id} />
+      <RichTextEditor
+        initialContent={note.content}
+        onChange={handleChange}
+        noteId={note.id}
+        readOnly={readOnly}
+        focusBodySignal={focusBodySignal}
+        onTranslateTitle={translateTitle}
+        onFocusTitle={() => {
+          const el = titleInputRef.current;
+          if (!el) return;
+          el.focus();
+          try {
+            const len = el.value.length;
+            el.setSelectionRange(len, len);
+          } catch {
+            /* 忽略 setSelectionRange 在非文本输入上的报错 */
+          }
+        }}
+      />
     </>
   );
 
@@ -267,15 +355,15 @@ export function NoteEditor({
       className={
         showCards
           ? "flex h-screen flex-col overflow-hidden"
-          : "flex min-h-screen flex-col"
+          : "flex min-h-[100dvh] flex-col overflow-x-clip"
       }
     >
-      {/* ===== 顶部：返回 + 菜单 + 完成 ===== */}
-      <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-black/5 bg-white/70 px-3 pt-[max(0.5rem,env(safe-area-inset-top))] py-2 backdrop-blur-md md:px-4">
+      {/* ===== 顶部：返回 + 菜单 + 完成（同一行，控件统一 h-9 到舒适可点区） ===== */}
+      <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-zinc-200 bg-white px-3 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-4">
         <BackButton
           fallback={backHref}
           forceFallback
-          className="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
+          className="icon-btn text-xl"
         />
 
         {/* 保存状态（居中，安静地显示） */}
@@ -286,7 +374,7 @@ export function NoteEditor({
         {/* 分享生成图片（独立按钮，放在菜单旁） */}
         <button
           onClick={() => setShareOpen(true)}
-          className="rounded-lg px-2 py-1.5 text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
+          className="icon-btn text-zinc-600"
           aria-label="分享生成图片"
           title="分享生成图片"
         >
@@ -306,11 +394,21 @@ export function NoteEditor({
           </svg>
         </button>
 
+        {/* 阅读 / 编辑切换 */}
+        <button
+          onClick={() => setReadOnly((v) => !v)}
+          className={`icon-btn ${readOnly ? "text-teal-600" : "text-zinc-600"}`}
+          aria-label={readOnly ? "切换到编辑" : "切换到阅读"}
+          title={readOnly ? "切换到编辑" : "切换到阅读"}
+        >
+          {readOnly ? <Pencil className="h-[18px] w-[18px]" /> : <BookOpen className="h-[18px] w-[18px]" />}
+        </button>
+
         {/* 菜单按钮 */}
         <div className="relative">
           <button
             onClick={() => setMenuOpen((v) => !v)}
-            className="rounded-lg px-2 py-1.5 text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
+            className="icon-btn text-zinc-600"
             aria-label="更多操作"
           >
             ⋯
@@ -324,56 +422,24 @@ export function NoteEditor({
                 onClick={() => setMenuOpen(false)}
               />
               <div className="absolute right-0 z-40 mt-2 w-60 rounded-xl border border-zinc-200 bg-white p-1.5 shadow-lg">
-                <p className="px-2.5 py-1.5 text-xs font-medium text-zinc-400">
-                  收录到文件夹
-                </p>
-
-                {folders.map((f) => (
-                  <button
-                    key={f.id}
-                    onClick={() => moveToFolder(f.id)}
-                    className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${
-                      folderId === f.id
-                        ? "bg-teal-50 text-teal-700"
-                        : "text-zinc-700 hover:bg-zinc-100"
-                    }`}
-                  >
-                    <span className="flex min-w-0 items-center gap-1.5 truncate">
-                      <Folder className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
-                      <span className="truncate">{f.name}</span>
+                {/* 收录到文件夹：不再把文件夹单塞进 ⋯ 菜单（多了会拉得很长），点开走底部弹层。 */}
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setFolderPickerOpen(true);
+                  }}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-100"
+                >
+                  <span className="min-w-0 truncate">
+                    收录到文件夹
+                    <span className="ml-1 text-xs text-zinc-400">
+                      {folderId
+                        ? (folders.find((f) => f.id === folderId)?.name ?? "无文件夹")
+                        : "无文件夹"}
                     </span>
-                    {folderId === f.id && <span>✓</span>}
-                  </button>
-                ))}
-
-                {newFolderOpen ? (
-                  <div className="flex items-center gap-1.5 px-1 py-1">
-                    <input
-                      value={newFolderName}
-                      onChange={(e) => setNewFolderName(e.target.value)}
-                      placeholder="新文件夹名"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") createFolderAndMove();
-                        if (e.key === "Escape") setNewFolderOpen(false);
-                      }}
-                      className="min-w-0 flex-1 rounded-lg border border-zinc-300 px-2 py-1 text-sm focus:border-teal-500 focus:outline-none"
-                    />
-                    <button
-                      onClick={createFolderAndMove}
-                      className="text-sm font-medium text-teal-600 hover:text-teal-700"
-                    >
-                      创建
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setNewFolderOpen(true)}
-                    className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-100"
-                  >
-                    <span>＋ 新建文件夹</span>
-                  </button>
-                )}
+                  </span>
+                  <span className="shrink-0 text-xs text-zinc-400">→</span>
+                </button>
 
                 <div className="my-1 h-px bg-zinc-100" />
 
@@ -402,16 +468,6 @@ export function NoteEditor({
                 <button
                   onClick={() => {
                     setMenuOpen(false);
-                    save();
-                  }}
-                  className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-100"
-                >
-                  保存
-                </button>
-
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
                     deleteNote();
                   }}
                   className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-sm text-red-600 transition-colors hover:bg-red-50"
@@ -423,26 +479,28 @@ export function NoteEditor({
           )}
         </div>
 
-        {/* 完成：保存当前内容，留在本页不再跳离（要离开用左上角返回） */}
+        {/* 保存：清掉挂起的自动保存，立即落一次库（自动保存之外给一个「确保已存」入口） */}
         <button
           onClick={finishEdit}
           disabled={saving}
-          className="rounded-lg bg-teal-600 px-3.5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700 disabled:opacity-60"
+          className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg bg-teal-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-teal-700 disabled:opacity-60"
         >
-          完成
+          保存
         </button>
       </header>
 
       {/* ===== 大标题 + 正文 ===== */}
+      {/* 外层铺白：内容列居中收缩（max-w-5xl）时，两侧留给白色而不是 body 的页面渐变底，
+          避免宽屏下露出绿色、显得不干净（与加载态的 bg-white 一致）。 */}
       <div
         className={
-          showCards ? "flex min-h-0 flex-1 overflow-hidden" : "flex flex-1"
+          showCards ? "flex min-h-0 flex-1 overflow-hidden bg-white" : "flex flex-1 bg-white"
         }
       >
         {/* 编辑器始终挂在同一个容器里，不因分栏开关而重挂（否则会丢未保存内容） */}
         <div
           className={
-            showCards ? "min-w-0 flex-1 overflow-y-auto" : "flex flex-1 justify-center"
+            showCards ? "min-w-0 flex-1 overflow-y-auto" : "flex min-w-0 flex-1 justify-center overflow-x-clip"
           }
         >
           <div className="mx-auto flex w-full max-w-3xl flex-col md:max-w-4xl xl:max-w-5xl">
@@ -452,11 +510,7 @@ export function NoteEditor({
 
         {/* 右：闪卡侧栏（仅分栏时） */}
         {showCards && (
-          <CardSidebar
-            noteId={note.id}
-            onClose={() => setShowCards(false)}
-            onConvert={() => setConvertOpen(true)}
-          />
+          <CardSidebar noteId={note.id} onClose={() => setShowCards(false)} />
         )}
       </div>
 
@@ -485,6 +539,17 @@ export function NoteEditor({
           onClose={() => setShareOpen(false)}
         />
       )}
+
+      {/* 收录到文件夹：底部弹出文件夹单（多了也能滚，参考苹果备忘录） */}
+      <FolderPickerSheet
+        open={folderPickerOpen}
+        onClose={() => setFolderPickerOpen(false)}
+        folders={folders}
+        title="收录到文件夹"
+        currentFolderId={folderId || null}
+        onPick={moveToFolder}
+        onCreateFolder={createFolderAndMove}
+      />
     </div>
   );
 }

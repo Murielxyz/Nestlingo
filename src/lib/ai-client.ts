@@ -94,7 +94,9 @@ async function anthropicChat({
   });
   if (!res.ok) {
     const errText = await res.text();
-    throw new AiError(`AI 调用失败（${res.status}）：${errText.slice(0, 300)}`, 502);
+    // 上游错误体详情只落服务端日志，不回传给前端（避免泄漏 provider 错误体 / 请求细节）。
+    console.error(`[ai] anthropic ${res.status}`, errText.slice(0, 1000));
+    throw new AiError(`AI 调用失败（${res.status}），请稍后重试`, 502);
   }
   const data = await res.json();
   return (data.content ?? [])
@@ -103,9 +105,9 @@ async function anthropicChat({
     .join("");
 }
 
-/** 把 OpenAI 兼容 provider 的上游错误体转成对用户友好的中文提示，保留原始状态码方便排查。 */
+/** 把 OpenAI 兼容 provider 的上游错误体转成对用户友好的中文提示，保留原始状态码方便排查。
+ *  原始错误体不回传前端，只落服务端日志。 */
 function friendlyProviderError(label: string, status: number, errText: string): string {
-  const raw = errText.slice(0, 300);
   let code = ""; // 上游 JSON 里可能自带更精确的错误码（如 Gemini 429）
   try {
     const j = JSON.parse(errText);
@@ -115,6 +117,7 @@ function friendlyProviderError(label: string, status: number, errText: string): 
   } catch {
     /* 非 JSON 错误体，忽略 */
   }
+  console.error(`[ai] ${label} ${status}`, errText.slice(0, 1000));
   const key = code || String(status);
   if (key === "429") {
     return `${label} 调用已达配额上限（429），本次没成功。请到 ${label === "Gemini" ? "Google AI Studio" : "该服务控制台"} 检查 API 配额或开通计费后再试。`;
@@ -129,9 +132,9 @@ function friendlyProviderError(label: string, status: number, errText: string): 
     return `${label} 配置的模型不存在或已下线（404），请换一个可用模型。`;
   }
   if (key === "400") {
-    return `${label} 拒绝了本次请求（400）：${raw}`;
+    return `${label} 拒绝了本次请求（400），请检查输入后重试`;
   }
-  return `AI 调用失败（${label} ${status}）：${raw}`;
+  return `AI 调用失败（${label} ${status}），请稍后重试`;
 }
 
 /** OpenAI 兼容的 chat/completions 请求（DeepSeek / OpenAI / Groq / Gemini 都走这套格式，
@@ -272,7 +275,8 @@ async function openaiVision(opts: AiVisionOptions): Promise<string> {
   });
   if (!res.ok) {
     const errText = await res.text();
-    throw new AiError(`图片识别失败（OpenAI ${res.status}）：${errText.slice(0, 300)}`, 502);
+    console.error(`[ai] openai-vision ${res.status}`, errText.slice(0, 1000));
+    throw new AiError(`图片识别失败（OpenAI ${res.status}），请稍后重试`, 502);
   }
   const data = await res.json();
   return typeof data?.choices?.[0]?.message?.content === "string"
@@ -316,7 +320,8 @@ async function anthropicVision(opts: AiVisionOptions): Promise<string> {
   });
   if (!res.ok) {
     const errText = await res.text();
-    throw new AiError(`图片识别失败（${res.status}）：${errText.slice(0, 300)}`, 502);
+    console.error(`[ai] anthropic-vision ${res.status}`, errText.slice(0, 1000));
+    throw new AiError(`图片识别失败（${res.status}），请稍后重试`, 502);
   }
   const data = await res.json();
   return (data.content ?? [])

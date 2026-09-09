@@ -27,23 +27,8 @@ export default async function NotesPage() {
         </div>
       </div>
 
-      {/* 手机端：文件夹 + 笔记列表（正常点开进入对应页面）。 */}
-      <div className="md:hidden">
-        {/* 标题吸顶（与全局顶部安全区对齐），不再随内容滚动，也不再因 py-6 留下顶部空隙。 */}
-        <header className="sticky top-0 z-20 border-b border-black/5 bg-white/70 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-md">
-          <h1 className="text-2xl font-bold text-zinc-900">笔记</h1>
-        </header>
-
-        <div className="px-4 py-4">
-          {error ? (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              {error}
-            </div>
-          ) : (
-            <NotesBrowser folders={folders} notes={notes} />
-          )}
-        </div>
-      </div>
+      {/* 手机端：NotesBrowser 自包含（头部 + 内容滚动都在组件内），直接整屏一个。 */}
+      <NotesBrowser folders={folders} notes={notes} queryError={error} />
     </>
   );
 }

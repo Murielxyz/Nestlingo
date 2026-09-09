@@ -3,8 +3,9 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Tag, Plus, Sparkles, X, Trash2, Check, Search, MoreHorizontal, Download } from "lucide-react";
+import { Tag, Plus, Sparkles, Trash2, Check, Search, MoreHorizontal, Download } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { BottomSheet } from "./bottom-sheet";
 import { createClient } from "@/lib/supabase/client";
 import { exportCardsCsv } from "@/lib/export-data";
 import type { CardWithNote, WordTheme } from "@/lib/types";
@@ -256,7 +257,7 @@ export function GroupBrowser({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="搜索主题 / 词…"
-            className="w-full rounded-xl border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm focus:border-teal-500 focus:outline-none"
+            className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-3 text-sm focus:border-teal-500 focus:outline-none placeholder:text-sm"
           />
         </div>
         {/* 次级工具栏：AI 智能整理 / 批量操作（默认样式）+ 新建分类（绿色主按钮，最右）——与按来源一致 */}
@@ -265,14 +266,14 @@ export function GroupBrowser({
             <button
               onClick={runCluster}
               disabled={clustering}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-2.5 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-60"
             >
               <Sparkles className="h-4 w-4" />
               {clustering ? "AI 整理中…" : "AI 智能整理"}
             </button>
             <button
               onClick={() => setCreating((v) => !v)}
-              className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
+              className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-3.5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
             >
               <Plus className="h-4 w-4" />
               新建分类
@@ -285,7 +286,7 @@ export function GroupBrowser({
       <div className="mb-5 flex flex-wrap items-center gap-2">
         <button
           onClick={() => setFilter("all")}
-          className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+          className={`rounded-full px-3 py-2 text-sm font-medium transition-colors ${
             filter === "all"
               ? "bg-teal-600 text-white"
               : "border border-zinc-200 text-zinc-500 hover:bg-zinc-50"
@@ -297,7 +298,7 @@ export function GroupBrowser({
           <button
             key={l}
             onClick={() => setFilter(l)}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+            className={`rounded-full px-3 py-2 text-sm font-medium transition-colors ${
               filter === l
                 ? "bg-teal-600 text-white"
                 : `${LANG_COLOR[l]} border border-transparent hover:opacity-80`
@@ -345,14 +346,14 @@ export function GroupBrowser({
             <button
               onClick={batchDelete}
               disabled={selected.size === 0}
-              className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
             >
               <Trash2 className="h-4 w-4" />
               删除所选
             </button>
             <button
               onClick={toggleBatch}
-              className="rounded-lg px-3 py-1.5 text-sm text-zinc-500 transition-colors hover:bg-zinc-100"
+              className="rounded-lg px-3 py-2 text-sm text-zinc-500 transition-colors hover:bg-zinc-100"
             >
               完成
             </button>
@@ -445,7 +446,7 @@ function ThemeExportButton({ cards, label }: { cards: CardWithNote[]; label: str
     <button
       onClick={exportOne}
       disabled={busy}
-      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-60"
+      className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 disabled:opacity-60"
     >
       <Download className="h-3.5 w-3.5" />
       {busy ? "导出中…" : "导出"}
@@ -461,10 +462,10 @@ function ThemeCardMenu({ onDelete }: { onDelete: () => void }) {
     <div className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
+        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
         aria-label="更多操作"
       >
-        <MoreHorizontal className="h-4 w-4" />
+        <MoreHorizontal className="h-5 w-5" />
       </button>
       {open && (
         <>
@@ -479,7 +480,7 @@ function ThemeCardMenu({ onDelete }: { onDelete: () => void }) {
                 setOpen(false);
                 onDelete();
               }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
             >
               <Trash2 className="h-3.5 w-3.5" />
               删除分类
@@ -615,42 +616,24 @@ function NewThemeForm({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-zinc-900">新建分类</h3>
-          <button
-            onClick={onClose}
-            className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-            aria-label="关闭"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
+    <BottomSheet open onClose={onClose} title="新建分类">
       <input
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="分类名（例如：曼谷旅行）"
-        className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-800 focus:border-teal-500 focus:outline-none"
+        className="w-full rounded-lg border border-zinc-200 px-3 py-2.5 text-sm font-medium text-zinc-800 focus:border-teal-500 focus:outline-none placeholder:text-sm"
       />
       <div className="mt-3 flex items-start gap-2">
         <input
           value={keywords}
           onChange={(e) => setKeywords(e.target.value)}
           placeholder="关键词（用顿号/空格分隔，命中即自动收录）"
-          className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-700 focus:border-teal-500 focus:outline-none"
+          className="w-full rounded-lg border border-zinc-200 px-3 py-2.5 text-sm text-zinc-700 focus:border-teal-500 focus:outline-none placeholder:text-sm"
         />
         <button
           onClick={aiFill}
           disabled={aiBusy}
-          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-teal-200 px-3 py-2 text-sm font-medium text-teal-600 transition-colors hover:bg-teal-50 disabled:opacity-60"
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-teal-200 px-3 py-2.5 text-sm font-medium text-teal-600 transition-colors hover:bg-teal-50 disabled:opacity-60"
         >
           <Sparkles className="h-4 w-4" />
           {aiBusy ? "生成中…" : "AI 补关键词"}
@@ -689,7 +672,7 @@ function NewThemeForm({
                 value={colQuery}
                 onChange={(e) => setColQuery(e.target.value)}
                 placeholder="搜索笔记标题 / 词面…"
-                className="w-full rounded-lg border border-zinc-200 py-1.5 pl-8 pr-3 text-xs focus:border-teal-500 focus:outline-none"
+                className="w-full rounded-lg border border-zinc-200 py-2 pl-8 pr-3 text-xs focus:border-teal-500 focus:outline-none"
               />
             </div>
             {colLoading ? (
@@ -730,19 +713,18 @@ function NewThemeForm({
       <div className="mt-4 flex justify-end gap-2">
         <button
           onClick={onClose}
-          className="rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-50"
+          className="rounded-lg border border-zinc-200 px-4 py-2.5 text-sm text-zinc-600 hover:bg-zinc-50"
         >
           取消
         </button>
         <button
           onClick={create}
           disabled={busy}
-          className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+          className="rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
         >
           {busy ? "创建中…" : "创建分类"}
         </button>
-        </div>
       </div>
-    </div>
+    </BottomSheet>
   );
 }

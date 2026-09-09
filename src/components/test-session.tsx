@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { SpeakButton } from "./speak-button";
 import { cardLang } from "@/lib/lang-detect";
 import { BackButton } from "./back-button";
+import { backMeaning } from "./card-back";
 
 type Question = {
   card: Card;
@@ -26,9 +27,9 @@ function shuffle<T>(arr: T[]): T[] {
 /** 从一组卡片出选择题：看正面（要记的词/句），从背面释义里选正确答案。 */
 function buildQuestions(pool: Card[], limit: number): Question[] {
   const cards = shuffle(pool).slice(0, limit);
-  const backs = pool.map((c) => (c.back ?? "").trim()).filter(Boolean);
+  const backs = pool.map((c) => backMeaning(c.back ?? "")).filter(Boolean);
   return cards.map((card): Question => {
-    const answer = (card.back ?? "").trim();
+    const answer = backMeaning(card.back ?? "");
     const others = shuffle(backs.filter((b) => b !== answer)).slice(0, 3);
     const options = Array.from(new Set(shuffle([answer, ...others])));
     return { card, options, answer };
@@ -43,11 +44,14 @@ export function TestSession({
   cards,
   backHref,
   limit = 20,
+  onCorrect,
 }: {
   cards: Card[];
   title: string;
   backHref: string;
   limit?: number;
+  /** 每答对一题回调（错题集用它把通过的卡移出错题集）。 */
+  onCorrect?: (cardId: string) => void;
 }) {
   // 只测有背面（有答案）的卡
   const pool = useMemo(
@@ -69,7 +73,10 @@ export function TestSession({
   const q = questions[idx];
 
   async function record(ok: boolean) {
-    if (ok) setCorrectCount((n) => n + 1);
+    if (ok) {
+      setCorrectCount((n) => n + 1);
+      onCorrect?.(q.card.id);
+    }
     else {
       setWrongList((l) => [...l, q]);
       // 落库到错题集（独立于 SM-2 复习评分；表没建/出错不影响测试本身）。
@@ -128,7 +135,7 @@ export function TestSession({
         </p>
         <BackButton
           fallback={backHref}
-          className="mt-6 inline-block rounded-lg bg-teal-600 px-5 py-2 text-sm font-semibold text-white hover:bg-teal-700"
+          className="mt-6 inline-block rounded-lg bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700"
         >
           返回
         </BackButton>
@@ -158,13 +165,13 @@ export function TestSession({
           <div className="mt-6 flex gap-2">
             <button
               onClick={restart}
-              className="flex-1 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700"
+              className="flex-1 rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-700"
             >
               再来一次
             </button>
             <BackButton
               fallback={backHref}
-              className="flex-1 rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-50"
+              className="flex-1 rounded-lg border border-zinc-200 px-4 py-2.5 text-sm text-zinc-600 hover:bg-zinc-50"
             >
               返回
             </BackButton>
@@ -254,7 +261,7 @@ export function TestSession({
           </p>
           <button
             onClick={next}
-            className="rounded-lg bg-teal-600 px-5 py-2 text-sm font-semibold text-white hover:bg-teal-700"
+            className="rounded-lg bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700"
           >
             {idx + 1 >= questions.length ? "查看成绩" : "下一题"}
           </button>

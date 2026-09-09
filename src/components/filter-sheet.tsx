@@ -77,8 +77,8 @@ export function FilterSheet({
                       onClick={() => g.onChange(o.value)}
                       className={
                         g.value === o.value
-                          ? "rounded-full bg-teal-600 px-2.5 py-1 text-xs font-medium text-white"
-                          : `rounded-full px-2.5 py-1 text-xs font-medium ${
+                          ? "rounded-full bg-teal-600 px-3 py-2 text-sm font-medium text-white"
+                          : `rounded-full px-3 py-2 text-sm font-medium ${
                               o.className ?? "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
                             }`
                       }
@@ -97,7 +97,7 @@ export function FilterSheet({
 }
 
 function chip(active: boolean) {
-  return `rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+  return `rounded-full px-3 py-2 text-sm font-medium transition-colors ${
     active ? "bg-teal-600 text-white" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
   }`;
 }

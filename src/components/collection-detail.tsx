@@ -147,7 +147,7 @@ export function CollectionDetail({
         </Link>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
-            <h1 className="text-xl font-bold text-zinc-900">{collection.name}</h1>
+            <h1 className="text-lg font-bold text-zinc-900">{collection.name}</h1>
             <p className="text-sm text-zinc-400">{materials.length} 条素材</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -157,7 +157,7 @@ export function CollectionDetail({
                 setAiOpen(false);
                 setUploadOpen((v) => !v);
               }}
-              className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
+              className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 px-3 py-2.5 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
             >
               <Upload className="h-4 w-4" />
               上传文件
@@ -168,7 +168,7 @@ export function CollectionDetail({
                 setUploadOpen(false);
                 setAiOpen((v) => !v);
               }}
-              className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
+              className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 px-3 py-2.5 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
             >
               <Sparkles className="h-4 w-4" />
               AI 生成
@@ -179,7 +179,7 @@ export function CollectionDetail({
                 setUploadOpen(false);
                 setAddOpen((v) => !v);
               }}
-              className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
+              className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-3.5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700"
             >
               <Plus className="h-4 w-4" />
               收藏素材
@@ -195,7 +195,7 @@ export function CollectionDetail({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="搜索这个合集里的标题 / 来源 / 链接…"
-          className="w-full rounded-xl border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm focus:border-teal-500 focus:outline-none"
+          className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-3 text-sm focus:border-teal-500 focus:outline-none placeholder:text-sm"
         />
       </div>
 
@@ -227,14 +227,14 @@ export function CollectionDetail({
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={toggleAllSel}
-              className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm font-medium text-teal-600 hover:bg-teal-50"
+              className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm font-medium text-teal-600 hover:bg-teal-50"
             >
               {allSel() ? <Square className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
               {allSel() ? "全不选" : "全选"}
             </button>
             <button
               onClick={() => setBatchMode(false)}
-              className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-600 hover:bg-zinc-50"
+              className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-50"
             >
               取消
             </button>
@@ -257,7 +257,7 @@ export function CollectionDetail({
                 <button
                   onClick={() => deleteMaterials(selIds)}
                   disabled={busy}
-                  className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+                  className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
                 >
                   {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                   删除选中（{selIds.length}）
@@ -269,7 +269,7 @@ export function CollectionDetail({
           <button
             onClick={() => setBatchMode(true)}
             disabled={materials.length === 0}
-            className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50"
           >
             <CheckSquare className="h-4 w-4" />
             批量操作
@@ -375,7 +375,7 @@ export function CollectionDetail({
                       ) : (
                         <button
                           onClick={() => setImportTarget(m)}
-                          className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-teal-700"
+                          className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-2.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-teal-700"
                         >
                           导入到笔记
                         </button>

@@ -61,10 +61,13 @@ function dedupKey(rawUrl: string, meta: Meta): string {
 export function AddMaterialPanel({
   collections,
   defaultCollectionId,
+  hideCollection,
   onClose,
 }: {
   collections: MaterialCollection[];
   defaultCollectionId?: string;
+  /** 收藏夹等场景隐藏「归入合集」选择（素材直接存成单条）。 */
+  hideCollection?: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -334,7 +337,7 @@ export function AddMaterialPanel({
             if (e.key === "Enter") resolve();
           }}
           placeholder="贴一个链接：YouTube 视频 / 合辑 / 音频 / 播客 / 文章…"
-          className="min-w-0 flex-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-800 focus:border-teal-500 focus:outline-none"
+          className="min-w-0 flex-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-800 focus:border-teal-500 focus:outline-none placeholder:text-sm"
         />
         <button
           onClick={resolve}
@@ -479,38 +482,39 @@ export function AddMaterialPanel({
                 ))}
               </select>
             </div>
-            {/* 归入的合集 */}
-            {defaultCollectionId ? (
-              <p className="text-xs text-zinc-500">
-                将归入合集「{collections.find((c) => c.id === defaultCollectionId)?.name}」。
-              </p>
-            ) : (
-              <div className="flex flex-col gap-1">
-                <select
-                  value={collectionId}
-                  onChange={(e) => setCollectionId(e.target.value)}
-                  className={input}
-                >
-                  <option value="">不归合集（单条）</option>
-                  {collections.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-                <div className="flex gap-1.5">
-                  <input
-                    value={newColName}
-                    onChange={(e) => setNewColName(e.target.value)}
-                    placeholder="或输入新合集名，新建一个"
+            {/* 归入的合集（收藏夹等场景可隐藏，直接存成单条） */}
+            {!hideCollection &&
+              (defaultCollectionId ? (
+                <p className="text-xs text-zinc-500">
+                  将归入合集「{collections.find((c) => c.id === defaultCollectionId)?.name}」。
+                </p>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  <select
+                    value={collectionId}
+                    onChange={(e) => setCollectionId(e.target.value)}
                     className={input}
-                  />
-                  <span className="inline-flex shrink-0 items-center px-1 text-zinc-300">
-                    <FolderPlus className="h-4 w-4" />
-                  </span>
+                  >
+                    <option value="">不归合集（单条）</option>
+                    {collections.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="flex gap-1.5">
+                    <input
+                      value={newColName}
+                      onChange={(e) => setNewColName(e.target.value)}
+                      placeholder="或输入新合集名，新建一个"
+                      className={input}
+                    />
+                    <span className="inline-flex shrink-0 items-center px-1 text-zinc-300">
+                      <FolderPlus className="h-4 w-4" />
+                    </span>
+                  </div>
                 </div>
-              </div>
-            )}
+              ))}
           </div>
         </div>
       )}
