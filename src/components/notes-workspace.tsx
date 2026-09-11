@@ -1,8 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { FolderPlus, FileText, Folder, Search, ChevronRight, ArrowUp, ArrowDown } from "lucide-react";
+import {
+  FolderPlus,
+  FileText,
+  Folder,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUp,
+  ArrowDown,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
   folderTree,
@@ -42,6 +51,8 @@ export function NotesWorkspace({
   const isNote = /^\/notes\/[^/]+$/.test(pathname);
 
   const [selectedId, setSelectedId] = useState<"all" | string>("all");
+  // 侧栏（文件夹栏 + 笔记列表栏）总开关：收起时两栏一起隐、内容几乎铺满；展开时两栏一起回来。
+  // 默认展开，且纯手动控制（不再进笔记页自动收起），开关固定在左上角、不随收起跳动。
   const [collapsed, setCollapsed] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -82,14 +93,6 @@ export function NotesWorkspace({
       );
     });
   }, [notes, selectedId, q, folders]);
-
-  // 打开某篇笔记时文件夹栏自动收起（≡ 按钮仍在笔记列表栏顶部，可随时展开）。
-  // 依赖 pathname 而非仅 isNote：笔记页之间跳转、或在笔记页展开文件夹栏后点另一篇，
-  // pathname 都会变、都要重新收起；只依赖 isNote 时这些场景不会触发（栏会一直开着）。
-  useEffect(() => {
-    if (isNote) setCollapsed(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname]);
 
   const folderCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -351,22 +354,33 @@ export function NotesWorkspace({
   }
 
   return (
-    <div className="flex md:h-screen">
-      {/* ===== 左：文件夹栏（桌面，可收起） ===== */}
-      {!collapsed && (
+    <div className="relative flex md:h-screen">
+      {/* ===== 侧栏总开关：固定在左上角，收起/展开都不跳动（←/→ 箭头标识） ===== */}
+      <button
+        onClick={() => setCollapsed((v) => !v)}
+        className="absolute left-2 top-2 z-30 hidden h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 md:inline-flex"
+        aria-label={collapsed ? "展开侧栏" : "收起侧栏"}
+        title={collapsed ? "展开侧栏" : "收起侧栏"}
+      >
+        {collapsed ? (
+          <ChevronRight className="h-[18px] w-[18px]" />
+        ) : (
+          <ChevronLeft className="h-[18px] w-[18px]" />
+        )}
+      </button>
+
+      {collapsed ? (
+        /* 收起：只留一条窄边给开关占位，内容几乎铺满 */
+        <div className="hidden w-11 shrink-0 border-r border-zinc-200 bg-zinc-50 md:block" />
+      ) : (
+        <>
+      {/* ===== 左：文件夹栏（桌面） ===== */}
         <aside
           style={{ width: folderResize.width }}
           className="relative hidden shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 md:flex"
         >
-          <div className="flex items-center gap-0.5 border-b border-zinc-200 px-2.5 py-2">
-            <button
-              onClick={() => setCollapsed(true)}
-              className="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
-              aria-label="收起文件夹"
-              title="收起文件夹"
-            >
-              ≡
-            </button>
+          {/* 左内边距让开左上角的开关按钮（pl-11） */}
+          <div className="flex items-center gap-0.5 border-b border-zinc-200 py-2 pl-11 pr-2.5">
             <span className="flex-1 px-1 text-sm font-semibold text-zinc-800">
               笔记
             </span>
@@ -432,7 +446,6 @@ export function NotesWorkspace({
             aria-hidden
           />
         </aside>
-      )}
 
       {/* ===== 中：笔记列表栏（桌面，可拖宽） ===== */}
       <div
@@ -440,16 +453,6 @@ export function NotesWorkspace({
         className="relative hidden shrink-0 flex-col border-r border-zinc-200 bg-white md:flex"
       >
         <div className="flex items-center gap-0.5 border-b border-zinc-200 px-2.5 py-2">
-          {collapsed && (
-            <button
-              onClick={() => setCollapsed(false)}
-              className="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
-              aria-label="展开文件夹"
-              title="展开文件夹"
-            >
-              ≡
-            </button>
-          )}
           <span className="min-w-0 flex-1 truncate px-1 text-sm font-semibold text-zinc-800">
             {headerTitle}
           </span>
@@ -496,6 +499,8 @@ export function NotesWorkspace({
           aria-hidden
         />
       </div>
+        </>
+      )}
 
       {/* ===== 右：内容栏 ===== */}
       <div className="min-w-0 flex-1 md:overflow-y-auto">{children}</div>

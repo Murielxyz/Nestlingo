@@ -341,9 +341,10 @@ export function RecognitionRulesForm({ initial }: { initial: RecognitionRules | 
         )}
       </div>
 
-      {/* 全局选项 */}
+      {/* 背面分行：哪些标记会让闪卡背面换行（同一类设置，放一组多选，不再单列一条） */}
       <div className="mb-5">
-        <p className="mb-2 text-xs font-medium text-zinc-500">全局选项</p>
+        <p className="mb-2 text-xs font-medium text-zinc-500">背面分行</p>
+        <p className="mb-2 text-xs text-zinc-400">遇到下面这些标记时，闪卡背面就换行（可多选）。</p>
 
         <div className="space-y-2">
           <RuleToggle
@@ -352,8 +353,8 @@ export function RecognitionRulesForm({ initial }: { initial: RecognitionRules | 
               setValues((prev) => ({ ...prev, wrapBackSpaces: v }));
               setSaved(false);
             }}
-            label="反面空两格换行"
-            hint="释义和例句之间用两个空格隔开时，各自换行"
+            label="两个空格"
+            hint="反面里释义和例句之间用两个空格隔开时，各自换行"
           />
           <RuleToggle
             checked={values.splitBySemicolon}
@@ -361,9 +362,17 @@ export function RecognitionRulesForm({ initial }: { initial: RecognitionRules | 
               setValues((prev) => ({ ...prev, splitBySemicolon: v }));
               setSaved(false);
             }}
-            label="按分号分句"
-            hint="反面里的例句用 ； 分隔时，每句一行"
+            label="分号 ；"
+            hint="反面里的例句用分号分隔时，每句一行"
           />
+        </div>
+      </div>
+
+      {/* 识别范围：从哪里取内容 */}
+      <div className="mb-5">
+        <p className="mb-2 text-xs font-medium text-zinc-500">识别范围</p>
+
+        <div className="space-y-2">
           <RuleToggle
             checked={values.calloutOnly}
             onChange={(v) => {
