@@ -355,19 +355,8 @@ export function NotesWorkspace({
   return (
     <div className="relative flex md:h-screen">
       {/* ===== 左：文件夹栏（桌面，自带 ←/→ 收起开关，与导航栏互不影响） ===== */}
-      {collapsed ? (
-        /* 收起：只留一条窄边放展开箭头（位置与展开态的收起按钮一致，都在左上角，不跳） */
-        <div className="hidden w-11 shrink-0 flex-col items-center border-r border-zinc-200 bg-zinc-50 pt-2 md:flex">
-          <button
-            onClick={() => setCollapsed(false)}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
-            aria-label="展开文件夹栏"
-            title="展开文件夹栏"
-          >
-            <ChevronRight className="h-[18px] w-[18px]" />
-          </button>
-        </div>
-      ) : (
+      {/* 收起时整栏隐去、不留窄缝；展开箭头挪到笔记列表栏顶部（同一位置，不跳） */}
+      {!collapsed && (
         <aside
           style={{ width: folderResize.width }}
           className="relative hidden shrink-0 flex-col border-r border-zinc-200 bg-zinc-50 md:flex"
@@ -453,7 +442,18 @@ export function NotesWorkspace({
         style={{ width: listResize.width }}
         className="relative hidden shrink-0 flex-col border-r border-zinc-200 bg-white md:flex"
       >
-        <div className="flex items-center gap-0.5 border-b border-zinc-200 px-2.5 py-2">
+        <div className="flex items-center gap-0.5 border-b border-zinc-200 px-2 py-2">
+          {/* 文件夹栏收起时，展开箭头落在这里——正好和展开态文件夹栏左上角那个 ← 同一位置，不跳 */}
+          {collapsed && (
+            <button
+              onClick={() => setCollapsed(false)}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
+              aria-label="展开文件夹栏"
+              title="展开文件夹栏"
+            >
+              <ChevronRight className="h-[18px] w-[18px]" />
+            </button>
+          )}
           <span className="min-w-0 flex-1 truncate px-1 text-sm font-semibold text-zinc-800">
             {headerTitle}
           </span>
