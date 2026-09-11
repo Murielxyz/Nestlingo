@@ -360,10 +360,12 @@ export function NoteEditor({
     >
       {/* ===== 顶部：返回 + 菜单 + 完成（同一行，控件统一 h-9 到舒适可点区） ===== */}
       <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-zinc-200 bg-white px-3 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-4">
+        {/* 返回：手机端必备（底部导航在笔记页被隐藏，返回是唯一出口）；
+            电脑端左侧常驻「全部笔记栏 + 导航栏」，返回冗余，隐掉更干净。 */}
         <BackButton
           fallback={backHref}
           forceFallback
-          className="icon-btn text-xl"
+          className="icon-btn text-xl md:hidden"
         />
 
         {/* 保存状态（居中，安静地显示） */}

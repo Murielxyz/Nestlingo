@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { NotebookPen, RefreshCw, Settings, MessageCircleHeart } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { BrandMark } from "./brand-mark";
+import { ShellCollapseProvider } from "./shell-collapse";
 
 const NAV_ITEMS: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/notes", label: "笔记", icon: NotebookPen },
@@ -29,6 +30,12 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  // 「导航栏 + 笔记文件夹栏」共用这一份状态并下发给笔记工作区：两栏永远一起收 / 一起展，
+  // 开关只有导航栏顶部这一个（位置固定不跳）。默认展开，纯手动控制。
+  const shellCollapse = useMemo(
+    () => ({ collapsed, setCollapsed, toggle: () => setCollapsed((v) => !v) }),
+    [collapsed]
+  );
 
   // 笔记区（/notes、/notes/[id]、/notes/folder/[folderId]）由 notes/layout 做布局，
   // 这里整页铺满、不套 max-w 和留白。
@@ -67,12 +74,6 @@ export function AppShell({
     pathname.startsWith("/groups/") ||
     /^\/notes\/[^/]+\/cards$/.test(pathname);
 
-  // 进入笔记区（自带文件夹/列表/内容三栏导航）时，一级导航自动收成窄条，把宽度让给笔记三栏；
-  // 离开后保持收起、不自动展开，由用户点侧栏「»」手动展开。
-  useEffect(() => {
-    if (isNotes) setCollapsed(true);
-  }, [isNotes]);
-
   // 每日复习提醒：应用打开时，若到了设置的时间且已开启，弹一条系统通知（当天只弹一次）。
   useEffect(() => {
     let cancelled = false;
@@ -103,8 +104,9 @@ export function AppShell({
   }, [pathname]);
 
   return (
+    <ShellCollapseProvider value={shellCollapse}>
     <div className="min-h-screen">
-      {/* ===== 桌面端左侧边栏（可收起成窄条，只留图标） ===== */}
+      {/* ===== 桌面端左侧边栏（可收起成窄条，只留图标；收起时笔记文件夹栏一并收） ===== */}
       <aside
         className={`hidden md:flex fixed inset-y-0 left-0 flex-col border-r border-zinc-200 bg-white transition-[width] duration-200 ${
           collapsed ? "w-14" : "w-64"
@@ -119,8 +121,8 @@ export function AppShell({
             <button
               onClick={() => setCollapsed(false)}
               className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
-              aria-label="展开菜单"
-              title="展开菜单"
+              aria-label="展开侧栏"
+              title="展开侧栏（菜单 + 笔记文件夹）"
             >
               »
             </button>
@@ -136,8 +138,8 @@ export function AppShell({
               <button
                 onClick={() => setCollapsed(true)}
                 className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
-                aria-label="收起菜单"
-                title="收起菜单"
+                aria-label="收起侧栏"
+                title="收起侧栏（菜单 + 笔记文件夹）"
               >
                 «
               </button>
@@ -213,5 +215,6 @@ export function AppShell({
         </nav>
       )}
     </div>
+    </ShellCollapseProvider>
   );
 }
