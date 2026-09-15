@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ExternalLink, BookOpen, Pencil, Columns2, Rows2, Highlighter } from "lucide-react";
+import { ExternalLink, BookOpen, Pencil, Columns2, Rows2 } from "lucide-react";
 import { generateHTML } from "@tiptap/core";
 import { editorExtensions } from "@/lib/editor-extensions";
 import { createClient, detachMaterialsFromNote } from "@/lib/supabase/client";
@@ -15,7 +15,6 @@ import { BackButton } from "./back-button";
 import { FolderPickerSheet } from "./folder-picker-sheet";
 import type { Folder as FolderType, Note, SourceMaterial } from "@/lib/types";
 import type { JSONContent } from "@tiptap/core";
-import type { HighlightApi } from "./rich-text-editor";
 
 // 富文本编辑器只在客户端渲染，避免 SSR 水合问题。
 const RichTextEditor = dynamic(
@@ -31,6 +30,10 @@ const RichTextEditor = dynamic(
  * 顶部一条「返回 + 菜单(⋯) + 完成」，下面是大标题 + 富文本正文铺满整页。
  * 正文最新内容经 onChange 存进 contentRef，保存时读取，避免每次按键触发父组件重渲染。
  */
+/** 分屏两屏比例的可拖范围：留 20% 起步，任何一屏都不会被拖没。 */
+const SPLIT_MIN = 0.2;
+const SPLIT_MAX = 0.8;
+
 export function NoteEditor({
   note,
   folders,
@@ -60,18 +63,8 @@ export function NoteEditor({
   // 也不会有两个编辑器往同一条记录写的并发保存冲突。手机端不放（宽度不够）。
   const [split, setSplit] = useState<null | "row" | "col">(null);
   const [previewHtml, setPreviewHtml] = useState("");
-  // 只读屏里拖选一段文字后浮出的「高亮」气泡：只读屏是静态 HTML，只报出「哪一块 + 选中什么 + 大致偏移」，
-  // 真正写入交给编辑器实例（唯一写者）——高亮是正文的一部分，随自动保存落库、导出 PDF / 分享图里都在。
-  const [mirrorBubble, setMirrorBubble] = useState<{
-    blockPos: number;
-    text: string;
-    approxOffset: number;
-    has: boolean;
-    left: number;
-    top: number;
-    /** 选区太靠上时气泡改放下方（上方会被滚动容器裁掉） */
-    below: boolean;
-  } | null>(null);
+  // 分屏两屏的比例（第一屏 = 只读对照屏）：可拖中间分隔条调整，左右 / 上下各自记住，双击恢复对半。
+  const [splitRatio, setSplitRatio] = useState({ row: 0.5, col: 0.5 });
   // 阅读 / 编辑模式：阅读态内容只读（点下划线词弹卡查义、滚动正常、无软键盘），编辑态正常编辑。
   const [readOnly, setReadOnly] = useState(false);
   // 标题里按回车 → 焦点移到正文编辑器（而不是在标题里换行）。
@@ -124,10 +117,8 @@ export function NoteEditor({
   // 分屏左屏是静态渲染的只读副本：用与编辑器 / 分享图同一套扩展转 HTML，样式与正文一致。
   const splitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const splitRef = useRef<null | "row" | "col">(null);
-  // 只读屏容器（盖 data-pos + 监听选区）与外层定位框（气泡按它算坐标）
-  const mirrorRef = useRef<HTMLDivElement>(null);
-  const mirrorWrapRef = useRef<HTMLDivElement>(null);
-  const highlightApiRef = useRef<HighlightApi | null>(null);
+  // 分屏内容行：拖分隔条时按它的矩形换算比例
+  const splitBoxRef = useRef<HTMLDivElement>(null);
 
   const refreshPreview = useCallback((json: JSONContent | null) => {
     try {
@@ -137,24 +128,26 @@ export function NoteEditor({
     }
   }, []);
 
+  // 挂载后读回上次拖的分屏比例（hydration 安全：挂载后读、try/catch，照 usePanelResize 的约定）。
+  useEffect(() => {
+    try {
+      const read = (mode: "row" | "col") => {
+        const raw = window.localStorage.getItem(`nestlingo:split-ratio-${mode}`);
+        if (raw === null) return 0.5;
+        const n = Number(raw);
+        return Number.isFinite(n) ? Math.min(Math.max(n, SPLIT_MIN), SPLIT_MAX) : 0.5;
+      };
+      setSplitRatio({ row: read("row"), col: read("col") });
+    } catch {
+      /* 忽略 */
+    }
+  }, []);
+
   // 开关分屏时立刻出一版；之后打字按 0.8s 防抖刷新，不逐键重渲染整篇。
   useEffect(() => {
     splitRef.current = split;
     if (split) refreshPreview(contentRef.current.json);
   }, [split, refreshPreview]);
-
-  // 只读屏每个顶层块盖上它在文档里的位置（渲染顺序与顶层节点一一对应），「高亮」定位要用。
-  // 用编辑器给的实时位置（不是渲染时那版 JSON），保证和定位时查的文档是同一份。
-  useEffect(() => {
-    const el = mirrorRef.current;
-    if (!el) return;
-    const offsets = highlightApiRef.current?.blockOffsets() ?? [];
-    Array.from(el.children).forEach((child, i) => {
-      const pos = offsets[i];
-      if (pos == null) (child as HTMLElement).removeAttribute("data-pos");
-      else (child as HTMLElement).setAttribute("data-pos", String(pos));
-    });
-  }, [previewHtml, split]);
 
   // 分屏是全屏专注视图，Esc 直接退出（只靠 ⋯ 菜单退出太隐蔽）。
   useEffect(() => {
@@ -305,69 +298,54 @@ export function NoteEditor({
   }
 
   /**
-   * 只读屏里选完文字：把「哪一块 + 选中什么 + 大致偏移」算出来，问编辑器这段现在是不是已高亮，
-   * 然后在该位置浮一个「高亮 / 取消高亮」气泡。跨块选择不支持（高亮得落在一个顶层节点里才稳）。
+   * 拖分隔条调整两屏比例：第一屏（只读对照屏）占 splitRatio，另一屏填满剩余。
+   * 左右 / 上下各自记住，双击分隔条恢复对半。
    */
-  function handleMirrorSelect() {
-    const container = mirrorRef.current;
-    const wrap = mirrorWrapRef.current;
-    const sel = window.getSelection();
-    if (!container || !wrap || !sel || sel.isCollapsed || sel.rangeCount === 0) {
-      setMirrorBubble(null);
-      return;
-    }
-    const range = sel.getRangeAt(0);
-    if (!container.contains(range.commonAncestorContainer)) {
-      setMirrorBubble(null);
-      return;
-    }
-    const blockElAt = (n: Node) =>
-      (n.nodeType === 3 ? n.parentElement : (n as HTMLElement))?.closest("[data-pos]") ?? null;
-    const blockEl = blockElAt(range.startContainer);
-    if (!blockEl || blockEl !== blockElAt(range.endContainer)) {
-      setMirrorBubble(null);
-      return;
-    }
-    const blockPos = Number(blockEl.getAttribute("data-pos"));
-    const text = sel.toString();
-    if (!Number.isFinite(blockPos) || !text.trim()) {
-      setMirrorBubble(null);
-      return;
-    }
-    // 块内大致字符偏移：同一段文字在块里出现多次时，用它挑最近的那次
-    const pre = range.cloneRange();
-    pre.selectNodeContents(blockEl);
-    pre.setEnd(range.startContainer, range.startOffset);
-    const approxOffset = pre.toString().length;
+  function startSplitDrag(e: React.PointerEvent) {
+    const mode = split;
+    const box = splitBoxRef.current;
+    if (!mode || !box) return;
+    e.preventDefault();
+    const rect = box.getBoundingClientRect();
+    const body = document.body;
+    const prevSelect = body.style.userSelect;
+    const prevCursor = body.style.cursor;
+    body.style.userSelect = "none"; // 拖拽期间别把两屏文字刷成一片蓝
+    body.style.cursor = mode === "row" ? "col-resize" : "row-resize";
 
-    const st = highlightApiRef.current?.state(blockPos, text, approxOffset) ?? null;
-    if (st === null) {
-      setMirrorBubble(null);
-      return;
-    }
-    const r = range.getBoundingClientRect();
-    const w = wrap.getBoundingClientRect();
-    // 选区离滚动容器顶部太近时，气泡放上方会被裁掉（overflow 会裁），改放选区下方。
-    const below = r.top - w.top < 40;
-    setMirrorBubble({
-      blockPos,
-      text,
-      approxOffset,
-      has: st === "on",
-      left: r.left - w.left + r.width / 2,
-      top: below ? r.bottom - w.top + 8 : r.top - w.top - 8,
-      below,
-    });
+    let latest = splitRatio[mode];
+    const onMove = (ev: PointerEvent) => {
+      const raw =
+        mode === "row"
+          ? (ev.clientX - rect.left) / rect.width
+          : (ev.clientY - rect.top) / rect.height;
+      latest = Math.min(Math.max(raw, SPLIT_MIN), SPLIT_MAX);
+      setSplitRatio((r) => ({ ...r, [mode]: latest }));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      body.style.userSelect = prevSelect;
+      body.style.cursor = prevCursor;
+      persistSplitRatio(mode, latest);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
   }
 
-  /** 点气泡：由编辑器给这段加 / 取消高亮，并立刻重渲染只读屏（不等 0.8s 防抖）。 */
-  function applyMirrorHighlight() {
-    const b = mirrorBubble;
-    setMirrorBubble(null);
-    if (!b) return;
-    const json = highlightApiRef.current?.toggle(b.blockPos, b.text, b.approxOffset) ?? null;
-    if (json) refreshPreview(json);
-    window.getSelection()?.removeAllRanges();
+  /** 双击分隔条：回到对半。 */
+  function resetSplitRatio() {
+    if (!split) return;
+    setSplitRatio((r) => ({ ...r, [split]: 0.5 }));
+    persistSplitRatio(split, 0.5);
+  }
+
+  function persistSplitRatio(mode: "row" | "col", v: number) {
+    try {
+      window.localStorage.setItem(`nestlingo:split-ratio-${mode}`, String(v));
+    } catch {
+      /* 忽略（隐私模式 / 存储写满） */
+    }
   }
 
   /** 保存。folderOverride 用于「收录到文件夹」时直接指定新文件夹。 */
@@ -510,8 +488,6 @@ export function NoteEditor({
         onTranslateTitle={translateTitle}
         // 分屏时编辑区是局部滚动容器，工具栏吸在它自己的顶部（0）而不是让开页头，避免上面漏一条缝
         toolbarStickyTop={split ? "0px" : undefined}
-        // 只读屏的「高亮」走这里回到编辑器写（唯一写者，不会两屏并发覆盖）
-        highlightApiRef={highlightApiRef}
         onFocusTitle={() => {
           const el = titleInputRef.current;
           if (!el) return;
@@ -735,50 +711,43 @@ export function NoteEditor({
               }`
             : "flex flex-1 bg-white"
         }
+        ref={splitBoxRef}
       >
         {/* 分屏对照屏（左 / 上）：静态只读渲染的同一篇笔记，自己独立滚动——
             左屏停在原文不动，右屏可以下滑到笔记区做笔记。打印时不打这屏（打可编辑那屏）。 */}
         {split && (
           <div
+            style={{ flexBasis: `${splitRatio[split] * 100}%` }}
             className={
               split === "row"
-                ? "min-w-0 flex-1 overflow-y-auto border-r border-zinc-200 print:hidden"
-                : "min-h-0 flex-1 overflow-y-auto border-b border-zinc-200 print:hidden"
+                ? "min-w-0 shrink-0 overflow-y-auto print:hidden"
+                : "min-h-0 shrink-0 overflow-y-auto print:hidden"
             }
-            onScroll={() => setMirrorBubble(null)}
           >
-            <div
-              ref={mirrorWrapRef}
-              className="relative mx-auto flex w-full max-w-3xl flex-col md:max-w-4xl xl:max-w-5xl"
-            >
+            <div className="mx-auto flex w-full max-w-3xl flex-col md:max-w-4xl xl:max-w-5xl">
               <div className="px-4 pt-2 md:px-8">
                 <h1 className="note-title-input mb-1 text-3xl font-bold leading-tight text-zinc-900">
                   {title || "无标题"}
                 </h1>
               </div>
               <div
-                ref={mirrorRef}
                 className="tiptap px-4 py-4 md:px-8"
-                onMouseUp={handleMirrorSelect}
-                onKeyUp={handleMirrorSelect}
                 dangerouslySetInnerHTML={{ __html: previewHtml }}
               />
-              {/* 选中文字后浮出的「高亮」气泡：加了就进正文（编辑器唯一写者），永久保留、导出也有 */}
-              {mirrorBubble && (
-                <button
-                  type="button"
-                  onClick={applyMirrorHighlight}
-                  style={{ left: mirrorBubble.left, top: mirrorBubble.top }}
-                  className={`absolute z-20 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white shadow-lg transition-colors hover:bg-zinc-700 ${
-                    mirrorBubble.below ? "" : "-translate-y-full"
-                  }`}
-                >
-                  <Highlighter className="h-3.5 w-3.5" />
-                  {mirrorBubble.has ? "取消高亮" : "高亮"}
-                </button>
-              )}
             </div>
           </div>
+        )}
+
+        {/* 分隔条：拖它调两屏比例，双击回到对半（border 挪到这，避免和把手叠成双线） */}
+        {split && (
+          <div
+            onPointerDown={startSplitDrag}
+            onDoubleClick={resetSplitRatio}
+            title="拖动调整两屏比例，双击恢复对半"
+            className={`z-10 shrink-0 touch-none bg-zinc-200 transition-colors hover:bg-teal-300 ${
+              split === "row" ? "w-1.5 cursor-col-resize" : "h-1.5 cursor-row-resize"
+            }`}
+          />
         )}
 
         {/* 编辑器始终挂在同一个容器里，不因分栏开关而重挂（否则会丢未保存内容） */}
