@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ExternalLink, BookOpen, Pencil, Columns2, Rows2 } from "lucide-react";
+import { ExternalLink, BookOpen, Pencil, Columns2, Rows2, Highlighter } from "lucide-react";
 import { generateHTML } from "@tiptap/core";
 import { editorExtensions } from "@/lib/editor-extensions";
 import { createClient, detachMaterialsFromNote } from "@/lib/supabase/client";
@@ -15,6 +15,7 @@ import { BackButton } from "./back-button";
 import { FolderPickerSheet } from "./folder-picker-sheet";
 import type { Folder as FolderType, Note, SourceMaterial } from "@/lib/types";
 import type { JSONContent } from "@tiptap/core";
+import type { HighlightApi } from "./rich-text-editor";
 
 // 富文本编辑器只在客户端渲染，避免 SSR 水合问题。
 const RichTextEditor = dynamic(
@@ -59,6 +60,18 @@ export function NoteEditor({
   // 也不会有两个编辑器往同一条记录写的并发保存冲突。手机端不放（宽度不够）。
   const [split, setSplit] = useState<null | "row" | "col">(null);
   const [previewHtml, setPreviewHtml] = useState("");
+  // 只读屏里拖选一段文字后浮出的「高亮」气泡：只读屏是静态 HTML，只报出「哪一块 + 选中什么 + 大致偏移」，
+  // 真正写入交给编辑器实例（唯一写者）——高亮是正文的一部分，随自动保存落库、导出 PDF / 分享图里都在。
+  const [mirrorBubble, setMirrorBubble] = useState<{
+    blockPos: number;
+    text: string;
+    approxOffset: number;
+    has: boolean;
+    left: number;
+    top: number;
+    /** 选区太靠上时气泡改放下方（上方会被滚动容器裁掉） */
+    below: boolean;
+  } | null>(null);
   // 阅读 / 编辑模式：阅读态内容只读（点下划线词弹卡查义、滚动正常、无软键盘），编辑态正常编辑。
   const [readOnly, setReadOnly] = useState(false);
   // 标题里按回车 → 焦点移到正文编辑器（而不是在标题里换行）。
@@ -111,6 +124,10 @@ export function NoteEditor({
   // 分屏左屏是静态渲染的只读副本：用与编辑器 / 分享图同一套扩展转 HTML，样式与正文一致。
   const splitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const splitRef = useRef<null | "row" | "col">(null);
+  // 只读屏容器（盖 data-pos + 监听选区）与外层定位框（气泡按它算坐标）
+  const mirrorRef = useRef<HTMLDivElement>(null);
+  const mirrorWrapRef = useRef<HTMLDivElement>(null);
+  const highlightApiRef = useRef<HighlightApi | null>(null);
 
   const refreshPreview = useCallback((json: JSONContent | null) => {
     try {
@@ -125,6 +142,19 @@ export function NoteEditor({
     splitRef.current = split;
     if (split) refreshPreview(contentRef.current.json);
   }, [split, refreshPreview]);
+
+  // 只读屏每个顶层块盖上它在文档里的位置（渲染顺序与顶层节点一一对应），「高亮」定位要用。
+  // 用编辑器给的实时位置（不是渲染时那版 JSON），保证和定位时查的文档是同一份。
+  useEffect(() => {
+    const el = mirrorRef.current;
+    if (!el) return;
+    const offsets = highlightApiRef.current?.blockOffsets() ?? [];
+    Array.from(el.children).forEach((child, i) => {
+      const pos = offsets[i];
+      if (pos == null) (child as HTMLElement).removeAttribute("data-pos");
+      else (child as HTMLElement).setAttribute("data-pos", String(pos));
+    });
+  }, [previewHtml, split]);
 
   // 分屏是全屏专注视图，Esc 直接退出（只靠 ⋯ 菜单退出太隐蔽）。
   useEffect(() => {
@@ -248,9 +278,22 @@ export function NoteEditor({
     setMenuOpen(false);
     setSplit(null);
     setShowCards(false);
+
+    // 浏览器自带的页眉标题、以及「存储为 PDF」的默认文件名，取的都是 document.title。
+    // 打印期间换成笔记标题：文件直接叫笔记名，页眉也不再是站点名。打印完还原。
+    const prevTitle = document.title;
+    const restoreTitle = () => {
+      document.title = prevTitle;
+      window.removeEventListener("afterprint", restoreTitle);
+    };
+    window.addEventListener("afterprint", restoreTitle);
+
     void save().finally(() => {
       // 等一帧布局重排（分屏/侧栏收起）再唤起打印框。
-      setTimeout(() => window.print(), 300);
+      setTimeout(() => {
+        document.title = titleRef.current.trim() || note.title || "笔记";
+        window.print();
+      }, 300);
     });
   }
 
@@ -259,6 +302,72 @@ export function NoteEditor({
     setMenuOpen(false);
     setShowCards(false);
     setSplit((s) => (s === mode ? null : mode));
+  }
+
+  /**
+   * 只读屏里选完文字：把「哪一块 + 选中什么 + 大致偏移」算出来，问编辑器这段现在是不是已高亮，
+   * 然后在该位置浮一个「高亮 / 取消高亮」气泡。跨块选择不支持（高亮得落在一个顶层节点里才稳）。
+   */
+  function handleMirrorSelect() {
+    const container = mirrorRef.current;
+    const wrap = mirrorWrapRef.current;
+    const sel = window.getSelection();
+    if (!container || !wrap || !sel || sel.isCollapsed || sel.rangeCount === 0) {
+      setMirrorBubble(null);
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    if (!container.contains(range.commonAncestorContainer)) {
+      setMirrorBubble(null);
+      return;
+    }
+    const blockElAt = (n: Node) =>
+      (n.nodeType === 3 ? n.parentElement : (n as HTMLElement))?.closest("[data-pos]") ?? null;
+    const blockEl = blockElAt(range.startContainer);
+    if (!blockEl || blockEl !== blockElAt(range.endContainer)) {
+      setMirrorBubble(null);
+      return;
+    }
+    const blockPos = Number(blockEl.getAttribute("data-pos"));
+    const text = sel.toString();
+    if (!Number.isFinite(blockPos) || !text.trim()) {
+      setMirrorBubble(null);
+      return;
+    }
+    // 块内大致字符偏移：同一段文字在块里出现多次时，用它挑最近的那次
+    const pre = range.cloneRange();
+    pre.selectNodeContents(blockEl);
+    pre.setEnd(range.startContainer, range.startOffset);
+    const approxOffset = pre.toString().length;
+
+    const st = highlightApiRef.current?.state(blockPos, text, approxOffset) ?? null;
+    if (st === null) {
+      setMirrorBubble(null);
+      return;
+    }
+    const r = range.getBoundingClientRect();
+    const w = wrap.getBoundingClientRect();
+    // 选区离滚动容器顶部太近时，气泡放上方会被裁掉（overflow 会裁），改放选区下方。
+    const below = r.top - w.top < 40;
+    setMirrorBubble({
+      blockPos,
+      text,
+      approxOffset,
+      has: st === "on",
+      left: r.left - w.left + r.width / 2,
+      top: below ? r.bottom - w.top + 8 : r.top - w.top - 8,
+      below,
+    });
+  }
+
+  /** 点气泡：由编辑器给这段加 / 取消高亮，并立刻重渲染只读屏（不等 0.8s 防抖）。 */
+  function applyMirrorHighlight() {
+    const b = mirrorBubble;
+    setMirrorBubble(null);
+    if (!b) return;
+    const json = highlightApiRef.current?.toggle(b.blockPos, b.text, b.approxOffset) ?? null;
+    if (json) refreshPreview(json);
+    window.getSelection()?.removeAllRanges();
   }
 
   /** 保存。folderOverride 用于「收录到文件夹」时直接指定新文件夹。 */
@@ -388,7 +497,8 @@ export function NoteEditor({
             el.style.height = "auto";
             el.style.height = `${el.scrollHeight}px`;
           }}
-          className="note-title-input max-h-[40vh] min-h-[1.5em] w-full resize-none overflow-y-auto border-none bg-transparent text-3xl font-bold leading-tight text-zinc-900 placeholder-zinc-300 focus:outline-none"
+          // 打印时解开 40vh 高度上限，长标题不会被截断成一小条
+          className="note-title-input max-h-[40vh] min-h-[1.5em] w-full resize-none overflow-y-auto border-none bg-transparent text-3xl font-bold leading-tight text-zinc-900 placeholder-zinc-300 focus:outline-none print:max-h-none print:overflow-visible"
         />
       </div>
       <RichTextEditor
@@ -400,6 +510,8 @@ export function NoteEditor({
         onTranslateTitle={translateTitle}
         // 分屏时编辑区是局部滚动容器，工具栏吸在它自己的顶部（0）而不是让开页头，避免上面漏一条缝
         toolbarStickyTop={split ? "0px" : undefined}
+        // 只读屏的「高亮」走这里回到编辑器写（唯一写者，不会两屏并发覆盖）
+        highlightApiRef={highlightApiRef}
         onFocusTitle={() => {
           const el = titleInputRef.current;
           if (!el) return;
@@ -412,6 +524,12 @@ export function NoteEditor({
           }
         }}
       />
+
+      {/* 打印落款：浏览器自带页脚是网页地址（网页改不了），关掉打印框里的「页眉和页脚」后，
+          用这一行在文末标出这是哪篇笔记。屏幕上不显示。 */}
+      <div className="hidden border-t border-zinc-200 pt-2 text-right text-[9pt] text-zinc-400 print:mx-8 print:mb-4 print:mt-8 print:block">
+        {title.trim() || note.title}
+      </div>
     </>
   );
 
@@ -627,17 +745,38 @@ export function NoteEditor({
                 ? "min-w-0 flex-1 overflow-y-auto border-r border-zinc-200 print:hidden"
                 : "min-h-0 flex-1 overflow-y-auto border-b border-zinc-200 print:hidden"
             }
+            onScroll={() => setMirrorBubble(null)}
           >
-            <div className="mx-auto flex w-full max-w-3xl flex-col md:max-w-4xl xl:max-w-5xl">
+            <div
+              ref={mirrorWrapRef}
+              className="relative mx-auto flex w-full max-w-3xl flex-col md:max-w-4xl xl:max-w-5xl"
+            >
               <div className="px-4 pt-2 md:px-8">
                 <h1 className="note-title-input mb-1 text-3xl font-bold leading-tight text-zinc-900">
                   {title || "无标题"}
                 </h1>
               </div>
               <div
+                ref={mirrorRef}
                 className="tiptap px-4 py-4 md:px-8"
+                onMouseUp={handleMirrorSelect}
+                onKeyUp={handleMirrorSelect}
                 dangerouslySetInnerHTML={{ __html: previewHtml }}
               />
+              {/* 选中文字后浮出的「高亮」气泡：加了就进正文（编辑器唯一写者），永久保留、导出也有 */}
+              {mirrorBubble && (
+                <button
+                  type="button"
+                  onClick={applyMirrorHighlight}
+                  style={{ left: mirrorBubble.left, top: mirrorBubble.top }}
+                  className={`absolute z-20 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white shadow-lg transition-colors hover:bg-zinc-700 ${
+                    mirrorBubble.below ? "" : "-translate-y-full"
+                  }`}
+                >
+                  <Highlighter className="h-3.5 w-3.5" />
+                  {mirrorBubble.has ? "取消高亮" : "高亮"}
+                </button>
+              )}
             </div>
           </div>
         )}

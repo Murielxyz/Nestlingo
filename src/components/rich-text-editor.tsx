@@ -186,6 +186,74 @@ function selectionContainsLink(editor: Editor): boolean {
   return found;
 }
 
+/**
+ * 只读对照屏（分屏）的「高亮」接口。只读屏是静态 HTML，拿不到 ProseMirror 位置，
+ * 所以它只负责报出「哪一块 + 选中了什么文字 + 大致偏移」，精确定位与写入交给编辑器实例
+ * （唯一写者）——这样两屏之间不存在并发写、也不会互相覆盖。
+ */
+export type HighlightApi = {
+  /** 每个顶层块在文档里的位置（顺序与只读屏渲染出的顶层元素一一对应）。 */
+  blockOffsets: () => number[];
+  /** 该段文字当前是否已高亮；在块内定位不到就返回 null（气泡不显示）。 */
+  state: (blockPos: number, text: string, approxOffset: number) => "on" | "off" | null;
+  /** 加 / 取消高亮，返回改动后的新 JSON（供只读屏立刻重渲染）。 */
+  toggle: (blockPos: number, text: string, approxOffset: number) => JSONContent | null;
+};
+
+/**
+ * 在某个顶层块里，按「选中文字 + 块内大致偏移」定位出绝对文档范围。
+ * 同一段文字在块里可能出现多次，取离大致偏移最近的那次，避免标错地方。
+ */
+function resolveBlockRange(
+  editor: Editor,
+  blockPos: number,
+  text: string,
+  approxOffset: number
+) {
+  const doc = editor.state.doc;
+  const node = doc.nodeAt(blockPos);
+  if (!node || !text) return null;
+
+  // 块内所有文本节点拼成一串，同时记下每段的起始绝对位置（文本会被加粗/链接等切成多段）。
+  // 段与段之间补一个换行：跨段落选中时浏览器的 selection.toString() 就是带换行的，
+  // 不补的话「选中跨越两段」永远匹配不上（原文 callout 里很常见）。
+  const segs: { start: number; text: string }[] = [];
+  let full = "";
+  let seenBlock = false;
+  doc.nodesBetween(blockPos + 1, blockPos + node.nodeSize - 1, (n, pos) => {
+    if (n.isTextblock) {
+      if (seenBlock) full += "\n";
+      seenBlock = true;
+    } else if (n.isText && n.text) {
+      segs.push({ start: pos, text: n.text });
+      full += n.text;
+    }
+    return true;
+  });
+  if (!full) return null;
+
+  const absAt = (i: number) => {
+    let k = i;
+    for (const s of segs) {
+      if (k < s.text.length) return s.start + k;
+      k -= s.text.length;
+    }
+    const last = segs[segs.length - 1];
+    return last.start + last.text.length;
+  };
+
+  let best = -1;
+  for (let i = full.indexOf(text); i !== -1; i = full.indexOf(text, i + 1)) {
+    if (best === -1 || Math.abs(i - approxOffset) < Math.abs(best - approxOffset)) best = i;
+  }
+  if (best === -1) return null;
+
+  const from = absAt(best);
+  const to = absAt(best + text.length);
+  if (to <= from) return null;
+  return { from, to, has: doc.rangeHasMark(from, to, editor.schema.marks.highlight) };
+}
+
 export function RichTextEditor({
   initialContent,
   onChange,
@@ -195,6 +263,7 @@ export function RichTextEditor({
   focusBodySignal,
   onTranslateTitle,
   toolbarStickyTop = "calc(env(safe-area-inset-top)+4rem)",
+  highlightApiRef,
 }: {
   initialContent?: unknown;
   onChange?: (json: JSONContent | null, text: string) => void;
@@ -212,6 +281,8 @@ export function RichTextEditor({
    * 否则工具栏会停在容器顶部下方 4rem 处，上面漏出一条能看到正文滚过的缝。
    */
   toolbarStickyTop?: string;
+  /** 供分屏只读屏调用「高亮」：由本组件填入实现（见 HighlightApi）。 */
+  highlightApiRef?: { current: HighlightApi | null };
 }) {
   // 本笔记「已收录进闪卡」的词 → 卡片映射（持久：挂载时从闪卡拉，收录/记录成功后追加）。
   // 两处用途：① 原文 callout 里给这些词加下划线装饰（collectedFrontsRef 原始 front 精确匹配）；
@@ -315,6 +386,35 @@ export function RichTextEditor({
     readOnlyRef.current = !!readOnly;
     editor?.setEditable(!readOnly);
   }, [readOnly, editor]);
+
+  // 把「高亮」的实现交给分屏只读屏（它只有静态 DOM，定位得靠这里的 ProseMirror 文档）。
+  useEffect(() => {
+    if (!highlightApiRef) return;
+    highlightApiRef.current = {
+      blockOffsets: () => {
+        if (!editor) return [];
+        const out: number[] = [];
+        editor.state.doc.forEach((_node, offset) => out.push(offset));
+        return out;
+      },
+      state: (blockPos, text, approxOffset) => {
+        if (!editor) return null;
+        const r = resolveBlockRange(editor, blockPos, text, approxOffset);
+        return r ? (r.has ? "on" : "off") : null;
+      },
+      toggle: (blockPos, text, approxOffset) => {
+        if (!editor) return null;
+        const r = resolveBlockRange(editor, blockPos, text, approxOffset);
+        if (!r) return null;
+        const chain = editor.chain().setTextSelection({ from: r.from, to: r.to });
+        (r.has ? chain.unsetHighlight() : chain.setHighlight()).run();
+        return editor.getJSON();
+      },
+    };
+    return () => {
+      highlightApiRef.current = null;
+    };
+  }, [editor, highlightApiRef]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ocrFileRef = useRef<HTMLInputElement>(null);
   const toolbarScrollAtRef = useRef(0);
@@ -1176,7 +1276,7 @@ export function RichTextEditor({
       {/* ===== 桌面端（md+）：全部按钮一行露出，缩窄自动换行（撤销/重做/AI 不固定，照旧随行）；callout 只显图标 ===== */}
       {!readOnly && (
       <div
-        className="sticky z-20 hidden border-b border-zinc-100 bg-white md:block"
+        className="sticky z-20 hidden border-b border-zinc-100 bg-white md:block print:hidden"
         style={{ top: toolbarStickyTop }}
       >
         <div className="flex items-center gap-0.5 px-4 py-1.5 md:px-8">
@@ -1225,7 +1325,7 @@ export function RichTextEditor({
       {/* ===== 移动端（<md）：顶部紧凑一条——左边可横滑，右侧固定 撤销/重做/AI；点 Aa 向下弹「格式」面板 ===== */}
       {!readOnly && (
       <div
-        className="sticky z-20 border-b border-zinc-100 bg-white md:hidden"
+        className="sticky z-20 border-b border-zinc-100 bg-white md:hidden print:hidden"
         style={{ top: toolbarStickyTop }}
       >
         {/* 格式面板：块样式行 + 字母格式格网（吸在工具栏下方） */}

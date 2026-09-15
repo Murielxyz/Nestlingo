@@ -683,13 +683,21 @@ ruby.furigana rt {
   .tiptap h6 {
     break-after: avoid;
   }
-  /* 整块内容尽量不跨页切断 */
-  .tiptap table,
+  /* 只有图片这类「断了就没意义」的小块才禁止跨页。
+     表格 / callout / 代码块往往比一页还高，禁止跨页会把它们整块推到下一页，
+     上一页就空出一大片（用户实测反馈）——所以这些允许正常断开。 */
   .tiptap img,
-  .tiptap pre,
-  .tiptap blockquote,
-  .tiptap .callout,
   .tiptap .media-embed {
+    break-inside: avoid;
+  }
+  /* 段落不要只剩一行在页首 / 页尾 */
+  .tiptap p,
+  .tiptap li {
+    orphans: 2;
+    widows: 2;
+  }
+  /* 表格行整体不拆开（行内断页会出现半截单元格） */
+  .tiptap tr {
     break-inside: avoid;
   }
   /* 表格：容器别再横向滚动（打印没有滚动条，溢出会被裁），整表按页宽铺开 */
