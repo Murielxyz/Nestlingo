@@ -4,7 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ExternalLink, BookOpen, Pencil } from "lucide-react";
+import { ExternalLink, BookOpen, Pencil, Columns2, Rows2 } from "lucide-react";
+import { generateHTML } from "@tiptap/core";
+import { editorExtensions } from "@/lib/editor-extensions";
 import { createClient, detachMaterialsFromNote } from "@/lib/supabase/client";
 import { ConvertToCards } from "./convert-to-cards";
 import { ShareModal } from "./share-modal";
@@ -52,6 +54,11 @@ export function NoteEditor({
   const [shareOpen, setShareOpen] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [showCards, setShowCards] = useState(false);
+  // 分屏（参考 Obsidian）：左/上 = 本笔记的只读对照屏，右/下 = 正常编辑器，两屏各自独立滚动
+  // （左屏停在原文，右屏可以下滑到笔记区做笔记）。用静态渲染而非第二个编辑器实例——不增开销，
+  // 也不会有两个编辑器往同一条记录写的并发保存冲突。手机端不放（宽度不够）。
+  const [split, setSplit] = useState<null | "row" | "col">(null);
+  const [previewHtml, setPreviewHtml] = useState("");
   // 阅读 / 编辑模式：阅读态内容只读（点下划线词弹卡查义、滚动正常、无软键盘），编辑态正常编辑。
   const [readOnly, setReadOnly] = useState(false);
   // 标题里按回车 → 焦点移到正文编辑器（而不是在标题里换行）。
@@ -101,10 +108,32 @@ export function NoteEditor({
     text: note.content_text ?? "",
   });
 
+  // 分屏左屏是静态渲染的只读副本：用与编辑器 / 分享图同一套扩展转 HTML，样式与正文一致。
+  const splitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const splitRef = useRef<null | "row" | "col">(null);
+
+  const refreshPreview = useCallback((json: JSONContent | null) => {
+    try {
+      setPreviewHtml(json ? generateHTML(json, editorExtensions) : "");
+    } catch {
+      setPreviewHtml("");
+    }
+  }, []);
+
+  // 开关分屏时立刻出一版；之后打字按 0.8s 防抖刷新，不逐键重渲染整篇。
+  useEffect(() => {
+    splitRef.current = split;
+    if (split) refreshPreview(contentRef.current.json);
+  }, [split, refreshPreview]);
+
   const handleChange = useCallback((json: JSONContent | null, text: string) => {
     contentRef.current = { json, text };
     scheduleAutoSave();
-  }, []);
+    if (splitRef.current) {
+      if (splitTimerRef.current) clearTimeout(splitTimerRef.current);
+      splitTimerRef.current = setTimeout(() => refreshPreview(json), 800);
+    }
+  }, [refreshPreview]);
 
   /** 静默写入数据库（自动保存用，不闪「保存中/已保存」提示）。 */
   function persist() {
@@ -166,6 +195,7 @@ export function NoteEditor({
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      if (splitTimerRef.current) clearTimeout(splitTimerRef.current);
       if (!dirtyRef.current) return;
       const { json, text } = contentRef.current;
       void createClient()
@@ -192,10 +222,33 @@ export function NoteEditor({
     if (cardCount === 0) {
       setConvertOpen(true);
     } else if (window.matchMedia("(min-width: 768px)").matches) {
+      setSplit(null); // 闪卡侧栏与分屏互斥，避免挤成三栏
       setShowCards((v) => !v);
     } else {
       router.push(`/notes/${note.id}/cards`);
     }
+  }
+
+  /**
+   * 导出 PDF：走浏览器原生打印（用户在打印框里选「存储为 PDF」）。
+   * 不引 jsPDF/html2canvas——中/泰文渲染差、体积还大；打印方式文字可选中、矢量清晰、零依赖。
+   * 打印前先把分屏收掉、并把没落库的改动存一次，保证导出的是完整的一整篇。
+   */
+  function exportPdf() {
+    setMenuOpen(false);
+    setSplit(null);
+    setShowCards(false);
+    void save().finally(() => {
+      // 等一帧布局重排（分屏/侧栏收起）再唤起打印框。
+      setTimeout(() => window.print(), 300);
+    });
+  }
+
+  /** 切换分屏方向；再点同方向即退出。开分屏时顺手关掉闪卡侧栏（两者互斥）。 */
+  function toggleSplit(mode: "row" | "col") {
+    setMenuOpen(false);
+    setShowCards(false);
+    setSplit((s) => (s === mode ? null : mode));
   }
 
   /** 保存。folderOverride 用于「收录到文件夹」时直接指定新文件夹。 */
@@ -350,16 +403,20 @@ export function NoteEditor({
     </>
   );
 
+  // 分屏 / 闪卡侧栏都要求「整屏固定高度 + 各栏自己滚」，所以共用 immersive 这一档布局。
+  // 打印时要把这档约束解开（h-screen / overflow-hidden 会把内容裁掉）。
+  const immersive = Boolean(split) || showCards;
+
   return (
     <div
       className={
-        showCards
-          ? "flex h-screen flex-col overflow-hidden"
+        immersive
+          ? "flex h-screen flex-col overflow-hidden print:h-auto print:overflow-visible"
           : "flex min-h-[100dvh] flex-col overflow-x-clip"
       }
     >
       {/* ===== 顶部：返回 + 菜单 + 完成（同一行，控件统一 h-9 到舒适可点区） ===== */}
-      <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-zinc-200 bg-white px-3 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-4">
+      <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-zinc-200 bg-white px-3 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] md:px-4 print:hidden">
         {/* 返回：手机端必备（底部导航在笔记页被隐藏，返回是唯一出口）；
             电脑端左侧常驻「全部笔记栏 + 导航栏」，返回冗余，隐掉更干净。 */}
         <BackButton
@@ -467,6 +524,32 @@ export function NoteEditor({
 
                 <div className="my-1 h-px bg-zinc-100" />
 
+                {/* 分屏（参考 Obsidian）：左/上只读对照原文，右/下照常编辑。仅电脑端。 */}
+                <button
+                  onClick={() => toggleSplit("row")}
+                  className="hidden w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-100 md:flex"
+                >
+                  <Columns2 className="h-4 w-4 shrink-0 text-zinc-400" />
+                  {split === "row" ? "退出左右分屏" : "左右分屏"}
+                </button>
+
+                <button
+                  onClick={() => toggleSplit("col")}
+                  className="hidden w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-100 md:flex"
+                >
+                  <Rows2 className="h-4 w-4 shrink-0 text-zinc-400" />
+                  {split === "col" ? "退出上下分屏" : "上下分屏"}
+                </button>
+
+                <button
+                  onClick={exportPdf}
+                  className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-100"
+                >
+                  导出 PDF
+                </button>
+
+                <div className="my-1 h-px bg-zinc-100" />
+
                 <button
                   onClick={() => {
                     setMenuOpen(false);
@@ -496,22 +579,52 @@ export function NoteEditor({
           避免宽屏下露出绿色、显得不干净（与加载态的 bg-white 一致）。 */}
       <div
         className={
-          showCards ? "flex min-h-0 flex-1 overflow-hidden bg-white" : "flex flex-1 bg-white"
+          immersive
+            ? `flex min-h-0 flex-1 overflow-hidden bg-white print:overflow-visible ${
+                split === "col" ? "flex-col" : ""
+              }`
+            : "flex flex-1 bg-white"
         }
       >
+        {/* 分屏对照屏（左 / 上）：静态只读渲染的同一篇笔记，自己独立滚动——
+            左屏停在原文不动，右屏可以下滑到笔记区做笔记。打印时不打这屏（打可编辑那屏）。 */}
+        {split && (
+          <div
+            className={
+              split === "row"
+                ? "min-w-0 flex-1 overflow-y-auto border-r border-zinc-200 print:hidden"
+                : "min-h-0 flex-1 overflow-y-auto border-b border-zinc-200 print:hidden"
+            }
+          >
+            <div className="mx-auto flex w-full max-w-3xl flex-col md:max-w-4xl xl:max-w-5xl">
+              <div className="px-4 pt-2 md:px-8">
+                <h1 className="note-title-input mb-1 text-3xl font-bold leading-tight text-zinc-900">
+                  {title || "无标题"}
+                </h1>
+              </div>
+              <div
+                className="tiptap px-4 py-4 md:px-8"
+                dangerouslySetInnerHTML={{ __html: previewHtml }}
+              />
+            </div>
+          </div>
+        )}
+
         {/* 编辑器始终挂在同一个容器里，不因分栏开关而重挂（否则会丢未保存内容） */}
         <div
           className={
-            showCards ? "min-w-0 flex-1 overflow-y-auto" : "flex min-w-0 flex-1 justify-center overflow-x-clip"
+            immersive
+              ? "min-w-0 flex-1 overflow-y-auto print:overflow-visible"
+              : "flex min-w-0 flex-1 justify-center overflow-x-clip print:overflow-visible"
           }
         >
-          <div className="mx-auto flex w-full max-w-3xl flex-col md:max-w-4xl xl:max-w-5xl">
+          <div className="mx-auto flex w-full max-w-3xl flex-col md:max-w-4xl xl:max-w-5xl print:max-w-none">
             {editorPane}
           </div>
         </div>
 
-        {/* 右：闪卡侧栏（仅分栏时） */}
-        {showCards && (
+        {/* 右：闪卡侧栏（仅分栏时；与分屏互斥） */}
+        {showCards && !split && (
           <CardSidebar noteId={note.id} onClose={() => setShowCards(false)} />
         )}
       </div>
@@ -520,7 +633,7 @@ export function NoteEditor({
       {!showCards && (
         <button
           onClick={handleFlashcards}
-          className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-30 flex items-center gap-1.5 rounded-full bg-teal-600 px-4 py-3 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-teal-700 md:bottom-8 md:right-8"
+          className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-30 flex items-center gap-1.5 rounded-full bg-teal-600 px-4 py-3 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-teal-700 md:bottom-8 md:right-8 print:hidden"
         >
           {cardCount > 0 ? "闪卡" : "转成闪卡"}
         </button>

@@ -659,3 +659,60 @@ ruby.furigana rt {
   max-width: 100%;
   border-radius: 8px;
 }
+
+/* ===== 导出 PDF（浏览器打印）=====
+   笔记页「导出 PDF」调 window.print()，用户在打印框里选「存储为 PDF」。
+   导航 / 侧栏 / 页头 / 悬浮按钮都由 Tailwind 的 `print:hidden` 关掉；
+   这里只管纸张、正文排版与分页，保证导出的是一整篇干净的文章。 */
+@media print {
+  html,
+  body {
+    background: #fff !important;
+  }
+  /* 正文：略收字号、放宽行距，接近 A4 阅读的排版密度 */
+  .tiptap {
+    font-size: 11.5pt;
+    line-height: 1.65;
+  }
+  /* 标题后面不立刻断页（避免孤行标题） */
+  .tiptap h1,
+  .tiptap h2,
+  .tiptap h3,
+  .tiptap h4,
+  .tiptap h5,
+  .tiptap h6 {
+    break-after: avoid;
+  }
+  /* 整块内容尽量不跨页切断 */
+  .tiptap table,
+  .tiptap img,
+  .tiptap pre,
+  .tiptap blockquote,
+  .tiptap .callout,
+  .tiptap .media-embed {
+    break-inside: avoid;
+  }
+  /* 表格：容器别再横向滚动（打印没有滚动条，溢出会被裁），整表按页宽铺开 */
+  .tiptap .tableWrapper,
+  .tiptap .table-scroll {
+    overflow: visible !important;
+  }
+  .tiptap table {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+  /* 链接按正文颜色排，不印出蓝紫下划线；颜色块保底可读 */
+  .tiptap a {
+    color: inherit;
+    text-decoration: none;
+  }
+  .tiptap .callout {
+    border: 1px solid #d4d4d8;
+    background: #fafafa !important;
+  }
+}
+
+@page {
+  size: A4;
+  margin: 16mm;
+}

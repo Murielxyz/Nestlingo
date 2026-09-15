@@ -98,7 +98,7 @@ export function AppShell({
   return (
     <div className="min-h-screen">
       {/* ===== 桌面端左侧导航（常驻窄栏 168px，不收起：少一个按钮、宽度也不占地） ===== */}
-      <aside className="hidden md:flex fixed inset-y-0 left-0 w-[168px] flex-col border-r border-zinc-200 bg-white">
+      <aside className="hidden md:flex fixed inset-y-0 left-0 w-[168px] flex-col border-r border-zinc-200 bg-white print:hidden">
         <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-4">
           <BrandMark className="h-7 w-7 shrink-0" />
           <span className="min-w-0 flex-1">
@@ -136,7 +136,7 @@ export function AppShell({
       </aside>
 
       {/* ===== 主内容区（移动端底部让出导航 + 底部安全区；顶部让出状态栏安全区） ===== */}
-      <main className={`md:pl-[168px] ${hasStickyHeader ? "" : "pt-[max(1rem,env(safe-area-inset-top))]"} ${reservesBottomEnd ? "pb-0" : "pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0"}`}>
+      <main className={`md:pl-[168px] print:pl-0 print:pt-0 print:pb-0 ${hasStickyHeader ? "" : "pt-[max(1rem,env(safe-area-inset-top))]"} ${reservesBottomEnd ? "pb-0" : "pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0"}`}>
         {isFullBleed ? (
           <div className="min-h-[100dvh]">{children}</div>
         ) : (
@@ -148,7 +148,7 @@ export function AppShell({
       {/* 笔记编辑页顶部已有返回键，底部导航不显示，避免编辑时遮挡。 */}
       {/* 复习/测试会话页同样隐藏，专注背诵。 */}
       {!isNoteDetail && !isReviewSession && (
-        <nav className="md:hidden fixed inset-x-0 bottom-0 z-10 flex border-t border-black/5 bg-white/80 pb-[env(safe-area-inset-bottom)] backdrop-blur-md">
+        <nav className="md:hidden fixed inset-x-0 bottom-0 z-10 flex border-t border-black/5 bg-white/80 pb-[env(safe-area-inset-bottom)] backdrop-blur-md print:hidden">
           {NAV_ITEMS.map((item) => {
             const active = isActive(pathname, item.href);
             const Icon = item.icon;

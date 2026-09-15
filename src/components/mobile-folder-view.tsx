@@ -54,14 +54,15 @@ export function MobileFolderView({
             fallback={backHref}
             className="icon-btn text-xl"
           />
-          {/* 标题（无图标，省空间）；pr-12 留出右侧控件空隙，避免长标题顶到居中的篇数。 */}
-          <h1 className="min-w-0 flex-1 truncate pr-12 text-lg font-bold text-zinc-900">
-            {folder.name}
-          </h1>
-          {/* 篇数：绝对水平居中，像苹果备忘录那样放在标题行正中。 */}
-          <span className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-xs text-zinc-400">
-            {folderNotes.length} 篇笔记
-          </span>
+          {/* 标题 + 篇数上下两行：篇数不再绝对居中压在标题上，多长的文件夹名都不会重合。 */}
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-lg font-bold leading-tight text-zinc-900">
+              {folder.name}
+            </h1>
+            <p className="mt-0.5 truncate text-xs text-zinc-400">
+              {folderNotes.length} 篇笔记
+            </p>
+          </div>
           <ViewToggleButton
             view={view}
             onChange={changeView}
