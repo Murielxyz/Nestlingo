@@ -194,6 +194,7 @@ export function RichTextEditor({
   onFocusTitle,
   focusBodySignal,
   onTranslateTitle,
+  toolbarStickyTop = "calc(env(safe-area-inset-top)+4rem)",
 }: {
   initialContent?: unknown;
   onChange?: (json: JSONContent | null, text: string) => void;
@@ -205,6 +206,12 @@ export function RichTextEditor({
   focusBodySignal?: number;
   /** 「原文」callout 翻译成功后顺带翻译笔记标题（由父组件提供）。 */
   onTranslateTitle?: () => Promise<void>;
+  /**
+   * 工具栏吸顶位置。默认让开笔记页头（safe-area + 4rem）；
+   * 分屏时编辑区是「自己滚动的局部容器」，顶上是它自己的边界，传 "0px"——
+   * 否则工具栏会停在容器顶部下方 4rem 处，上面漏出一条能看到正文滚过的缝。
+   */
+  toolbarStickyTop?: string;
 }) {
   // 本笔记「已收录进闪卡」的词 → 卡片映射（持久：挂载时从闪卡拉，收录/记录成功后追加）。
   // 两处用途：① 原文 callout 里给这些词加下划线装饰（collectedFrontsRef 原始 front 精确匹配）；
@@ -1168,7 +1175,10 @@ export function RichTextEditor({
     <div className="flex min-w-0 flex-1 flex-col bg-white">
       {/* ===== 桌面端（md+）：全部按钮一行露出，缩窄自动换行（撤销/重做/AI 不固定，照旧随行）；callout 只显图标 ===== */}
       {!readOnly && (
-      <div className="sticky top-[calc(env(safe-area-inset-top)+4rem)] z-20 hidden border-b border-zinc-100 bg-white md:block">
+      <div
+        className="sticky z-20 hidden border-b border-zinc-100 bg-white md:block"
+        style={{ top: toolbarStickyTop }}
+      >
         <div className="flex items-center gap-0.5 px-4 py-1.5 md:px-8">
           <div
             className="no-scrollbar flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
@@ -1214,7 +1224,10 @@ export function RichTextEditor({
 
       {/* ===== 移动端（<md）：顶部紧凑一条——左边可横滑，右侧固定 撤销/重做/AI；点 Aa 向下弹「格式」面板 ===== */}
       {!readOnly && (
-      <div className="sticky top-[calc(env(safe-area-inset-top)+4rem)] z-20 border-b border-zinc-100 bg-white md:hidden">
+      <div
+        className="sticky z-20 border-b border-zinc-100 bg-white md:hidden"
+        style={{ top: toolbarStickyTop }}
+      >
         {/* 格式面板：块样式行 + 字母格式格网（吸在工具栏下方） */}
         {openPanel === "format" && (
           <>

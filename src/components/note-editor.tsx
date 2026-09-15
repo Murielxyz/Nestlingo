@@ -126,6 +126,16 @@ export function NoteEditor({
     if (split) refreshPreview(contentRef.current.json);
   }, [split, refreshPreview]);
 
+  // 分屏是全屏专注视图，Esc 直接退出（只靠 ⋯ 菜单退出太隐蔽）。
+  useEffect(() => {
+    if (!split) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSplit(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [split]);
+
   const handleChange = useCallback((json: JSONContent | null, text: string) => {
     contentRef.current = { json, text };
     scheduleAutoSave();
@@ -388,6 +398,8 @@ export function NoteEditor({
         readOnly={readOnly}
         focusBodySignal={focusBodySignal}
         onTranslateTitle={translateTitle}
+        // 分屏时编辑区是局部滚动容器，工具栏吸在它自己的顶部（0）而不是让开页头，避免上面漏一条缝
+        toolbarStickyTop={split ? "0px" : undefined}
         onFocusTitle={() => {
           const el = titleInputRef.current;
           if (!el) return;
@@ -410,9 +422,13 @@ export function NoteEditor({
   return (
     <div
       className={
-        immersive
-          ? "flex h-screen flex-col overflow-hidden print:h-auto print:overflow-visible"
-          : "flex min-h-[100dvh] flex-col overflow-x-clip"
+        split
+          ? // 分屏 = 全屏专注：铺满整个窗口，把导航栏 / 文件夹栏 / 笔记列表栏都盖住，
+            // 屏幕上只剩左右（或上下）两屏，不再叠成四五栏。
+            "fixed inset-0 z-50 flex flex-col bg-white print:static print:h-auto print:overflow-visible"
+          : immersive
+            ? "flex h-screen flex-col overflow-hidden print:h-auto print:overflow-visible"
+            : "flex min-h-[100dvh] flex-col overflow-x-clip"
       }
     >
       {/* ===== 顶部：返回 + 菜单 + 完成（同一行，控件统一 h-9 到舒适可点区） ===== */}
@@ -462,6 +478,22 @@ export function NoteEditor({
         >
           {readOnly ? <Pencil className="h-[18px] w-[18px]" /> : <BookOpen className="h-[18px] w-[18px]" />}
         </button>
+
+        {/* 分屏是全屏专注视图，给一个显眼出口（等同 ⋯ 菜单里的「退出分屏」）。 */}
+        {split && (
+          <button
+            onClick={() => setSplit(null)}
+            className="icon-btn text-teal-600"
+            aria-label="退出分屏"
+            title="退出分屏"
+          >
+            {split === "row" ? (
+              <Columns2 className="h-[18px] w-[18px]" />
+            ) : (
+              <Rows2 className="h-[18px] w-[18px]" />
+            )}
+          </button>
+        )}
 
         {/* 菜单按钮 */}
         <div className="relative">
